@@ -1,0 +1,30 @@
+# Node
+node_modules/
+package-lock.json
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/package-lock.json
+
+# Python
+python/.venv/
+python/__pycache__/
+python/tenants/
+python/dist/
+python/build/
+python/*.spec
+
+# Local config & logs
+settings.json
+log.txt
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build and Temp folders
+bin/
+build/

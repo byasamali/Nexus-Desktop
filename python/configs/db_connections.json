@@ -1,0 +1,8 @@
+{
+  "Botanik": {
+    "driver": "{ODBC Driver 17 for SQL Server}",
+    "server_instance": ".\\BOTANIKSQL",
+    "database": "eczane",
+    "auth_type": "windows"
+  }
+}
