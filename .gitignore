@@ -1,20 +1,35 @@
 # Node
 node_modules/
 package-lock.json
+yarn-error.log
+yarn.lock
 
 # Next.js
 frontend/.next/
 frontend/out/
 frontend/node_modules/
 frontend/package-lock.json
+frontend/package.json.md5
+*.tsbuildinfo
 
 # Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
 python/.venv/
-python/__pycache__/
 python/tenants/
 python/dist/
 python/build/
 python/*.spec
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Database files
+*.sqlite
+*.db
+python/database/master_db.sqlite
+python/database/last_sync.txt
 
 # Local config & logs
 settings.json
