@@ -63,15 +63,15 @@ def main():
     with open(queries_path, 'r', encoding='utf-8') as f:
         queries = json.load(f)
         
-    software_config = connections.get(software)
+    software_config = connections.get(software) or {}
     software_queries = queries.get(software)
     
-    if not software_config or not software_queries:
-        print(f"Error: Configurations not found for software '{software}'", file=sys.stderr)
+    if not software_queries:
+        print(f"Error: Queries not found for software '{software}'", file=sys.stderr)
         sys.exit(1)
         
-    db_server = software_config.get('server_instance')
-    db_name = software_config.get('database')
+    db_server = settings.get('server_instance') or software_config.get('server_instance')
+    db_name = settings.get('database') or software_config.get('database')
     raw_query_val = software_queries.get('fetch_raw_data')
     
     if isinstance(raw_query_val, list):

@@ -1,13 +1,88 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Moon, Search, AlertCircle, PackageOpen, Copy, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Moon, Search, AlertCircle, PackageOpen, Copy, Check, RefreshCw } from 'lucide-react';
 
-export default function DeadStockReport({ data }: { data: any[] }) {
+export default function DeadStockReport({ data, gln }: { data: any[], gln: string }) {
     const [search, setSearch] = useState("");
     const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
     const [sortField, setSortField] = useState<string | null>(null);
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+    // Return list state & visual feedback state
+    const [returnsList, setReturnsList] = useState<any[]>([]);
+    const [addedToReturns, setAddedToReturns] = useState<Record<string, boolean>>({});
+
+    const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
+
+    const loadReturnsList = async () => {
+        try {
+            if (isWails && gln) {
+                const content = await (window as any).go.main.App.LoadLocalJSON(gln, "iade_listesi.json");
+                if (content && content !== '{}') {
+                    setReturnsList(JSON.parse(content));
+                } else {
+                    setReturnsList([]);
+                }
+            } else {
+                const cached = localStorage.getItem(`iade_listesi_${gln}`);
+                if (cached) {
+                    setReturnsList(JSON.parse(cached));
+                } else {
+                    setReturnsList([]);
+                }
+            }
+        } catch (err) {
+            console.error("İade listesi yüklenirken hata:", err);
+        }
+    };
+
+    useEffect(() => {
+        loadReturnsList();
+
+        const handleUpdate = () => {
+            loadReturnsList();
+        };
+        window.addEventListener('nexus:iadeListesiUpdated', handleUpdate);
+        return () => {
+            window.removeEventListener('nexus:iadeListesiUpdated', handleUpdate);
+        };
+    }, [gln]);
+
+    const saveReturnsList = async (list: any[]) => {
+        try {
+            if (isWails && gln) {
+                await (window as any).go.main.App.SaveLocalJSON(gln, "iade_listesi.json", JSON.stringify(list));
+            } else {
+                localStorage.setItem(`iade_listesi_${gln}`, JSON.stringify(list));
+            }
+            setReturnsList(list);
+            window.dispatchEvent(new CustomEvent('nexus:iadeListesiUpdated'));
+        } catch (err) {
+            console.error("İade listesi kaydedilirken hata:", err);
+        }
+    };
+
+    const addToReturns = async (item: any) => {
+        const barkod = item.barkod;
+        const ad = item.ad || 'Bilinmeyen Ürün';
+        const adet = Number(item.stok) || 1;
+
+        const newList = [...returnsList];
+        const existingIdx = newList.findIndex(i => i.barkod === barkod);
+        if (existingIdx > -1) {
+            newList[existingIdx].adet = (newList[existingIdx].adet || 0) + adet;
+        } else {
+            newList.push({ barkod, ad, adet });
+        }
+
+        await saveReturnsList(newList);
+
+        setAddedToReturns(prev => ({ ...prev, [barkod]: true }));
+        setTimeout(() => setAddedToReturns(prev => ({ ...prev, [barkod]: false })), 2000);
+    };
+
+
 
     const handleSort = (field: string) => {
         if (sortField === field) {
@@ -109,6 +184,9 @@ export default function DeadStockReport({ data }: { data: any[] }) {
                                 <th onClick={() => handleSort('son_satis')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">
                                     Hareketsizlik {sortField === 'son_satis' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
                                 </th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] select-none">
+                                    İşlem
+                                </th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
@@ -135,7 +213,22 @@ export default function DeadStockReport({ data }: { data: any[] }) {
                                             {item.son_satis} Gün
                                         </div>
                                     </td>
-
+                                    <td className="px-8 py-5">
+                                        <button
+                                            onClick={() => addToReturns(item)}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-xs transition-all ${
+                                                addedToReturns[item.barkod]
+                                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700'
+                                            }`}
+                                        >
+                                            {addedToReturns[item.barkod] ? (
+                                                <><Check size={12} /> Eklendi</>
+                                            ) : (
+                                                <><RefreshCw size={12} /> İadeye Ekle</>
+                                            )}
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -145,6 +238,8 @@ export default function DeadStockReport({ data }: { data: any[] }) {
                     )}
                 </div>
             </div>
+
+
         </div>
     );
 }

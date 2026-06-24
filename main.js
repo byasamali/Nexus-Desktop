@@ -153,6 +153,42 @@ ipcMain.handle('wails:OpenURLInBrowser', async (event, targetURL) => {
   return true;
 });
 
+ipcMain.handle('wails:GetWebviewPreloadPath', async () => {
+  return path.join(execDir, 'webview-preload.js');
+});
+
+ipcMain.handle('wails:RunCategoryAction', async (event, action, paramsJSON) => {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(pythonDir, 'manage_categories.py');
+    let pythonProcess;
+    if (fs.existsSync(pythonVenvPython)) {
+      pythonProcess = spawn(pythonVenvPython, [scriptPath, action, paramsJSON]);
+    } else {
+      pythonProcess = spawn('python', [scriptPath, action, paramsJSON]);
+    }
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString('utf8');
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString('utf8');
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`manage_categories.py failed with code ${code}. Stderr: ${stderrData}`);
+        reject(new Error(stderrData || `Exit code ${code}`));
+        return;
+      }
+      resolve(stdoutData.trim());
+    });
+  });
+});
+
 // IPC Handler for TriggerSyncAndAnalysis (Offline execution of Python script)
 ipcMain.handle('wails:TriggerSyncAndAnalysis', async (event, gln, fullSync) => {
   return new Promise((resolve, reject) => {

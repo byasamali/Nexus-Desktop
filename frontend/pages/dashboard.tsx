@@ -16,6 +16,9 @@ import DeadStockReport from '@/components/DeadStockReport';
 import OutOfStockReport from '@/components/OutOfStockReport';
 import KardesEczanePage from '@/components/KardesEczane';
 import Depolar from '@/components/Depolar';
+import CategoryManager from '@/components/CategoryManager';
+import IadelerPage from '@/components/Iadeler';
+import ProductDbModal from '@/components/ProductDbModal';
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { fetchEczaneData } from '@/lib/api';
@@ -24,7 +27,7 @@ import {
   Package, Activity, Moon, AlertTriangle, Search,
   Copy, ShoppingCart, BarChart2, Check, ChevronDown, Calendar, Brain,
   DollarSign, ClipboardList, X, TrendingUp, RefreshCw, MoreVertical, EyeOff, Zap, Download, Layers, Sparkles, ChevronRight,
-  ListX, PackageX, Star, ArrowRight, Pill, FlaskConical,
+  ListX, RotateCcw, PackageX, Star, ArrowRight, Pill, FlaskConical,
   Building2, Users, Wrench, Settings, Menu, Truck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -32,11 +35,11 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
 import {
-  getAnaKategoriler,
-  getAltKategoriler,
+  getAnaKategoriler as defaultGetAnaKategoriler,
+  getAltKategoriler as defaultGetAltKategoriler,
   isInAnaKategori,
-  getBreadcrumb,
-  isPharmaceuticalCategory,
+  getBreadcrumb as defaultGetBreadcrumb,
+  isPharmaceuticalCategory as defaultIsPharmaceuticalCategory,
   type Category,
 } from '@/lib/categoryMap';
 
@@ -273,12 +276,14 @@ interface CartItem { qty: number; mf: number; inCart: boolean; ad: string; depo:
 function KategoriFiltreBar({
   selectedMainCats, setSelectedMainCats, selectedAltCats, setSelectedAltCats,
   excludedAltCats, setExcludedAltCats,
+  getAnaKategoriler = defaultGetAnaKategoriler,
+  getAltKategoriler = defaultGetAltKategoriler,
 }: any) {
   const anaKategoriler = getAnaKategoriler();
   const [activeAna, setActiveAna] = useState<number | null>(selectedMainCats[0] || null);
   const [catSearch, setCatSearch] = useState(""); // Kategori içi arama
 
-  const altKategoriler = activeAna ? getAltKategoriler(activeAna).filter(c =>
+  const altKategoriler = activeAna ? getAltKategoriler(activeAna).filter((c: any) =>
     c.isim.toLowerCase().includes(catSearch.toLowerCase())
   ) : [];
 
@@ -376,6 +381,129 @@ export default function OrderCockpit() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('oneri');
+  
+  // Dynamic categories state and helpers
+  const [dbCategories, setDbCategories] = useState<any[]>([]);
+  const [dynamicCategoryMap, setDynamicCategoryMap] = useState<Record<number, any>>({});
+  const [showOnlyZeroStock, setShowOnlyZeroStock] = useState(false);
+  const [editingCategoryProduct, setEditingCategoryProduct] = useState<any>(null);
+  const [editingDbProduct, setEditingDbProduct] = useState<any>(null);
+
+  const loadDbCategories = async () => {
+    try {
+      if (!isWails) return;
+      const response = await (window as any).go.main.App.RunCategoryAction("list", "{}");
+      const result = JSON.parse(response);
+      if (result.status === "success") {
+        setDbCategories(result.categories || []);
+        
+        const raw = result.categories || [];
+        const map: Record<number, any> = {};
+        for (const r of raw) {
+          map[r.id] = { ...r, tam_yol: [], tam_yol_ids: [] };
+        }
+        
+        const getPath = (id: number): { isimler: string[]; ids: number[] } => {
+          const cat = map[id];
+          if (!cat) return { isimler: [], ids: [] };
+          if (cat.ust_kategori_id === null) return { isimler: [cat.isim], ids: [cat.id] };
+          const parent = getPath(cat.ust_kategori_id);
+          return {
+            isimler: [...parent.isimler, cat.isim],
+            ids: [...parent.ids, cat.id],
+          };
+        };
+        
+        for (const cat of Object.values(map)) {
+          const path = getPath(cat.id);
+          map[cat.id].tam_yol = path.isimler;
+          map[cat.id].tam_yol_ids = path.ids;
+        }
+        setDynamicCategoryMap(map);
+      }
+    } catch (err) {
+      console.error("Error loading categories from SQLite:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadDbCategories();
+  }, []);
+
+  const getDynamicBreadcrumb = (id: number) => {
+    return dynamicCategoryMap[id]?.tam_yol?.join(' > ') ?? defaultGetBreadcrumb(id);
+  };
+
+  const getDynamicAnaKategoriler = () => {
+    const list = Object.values(dynamicCategoryMap).filter((c: any) => c.is_ana_kategori);
+    return list.length > 0 ? list : defaultGetAnaKategoriler();
+  };
+
+  const getDynamicAltKategoriler = (anaId: number) => {
+    const list = Object.values(dynamicCategoryMap).filter((c: any) => c.ust_kategori_id === anaId);
+    return list.length > 0 ? list : defaultGetAltKategoriler(anaId);
+  };
+
+  const isDynamicPharmaceuticalCategory = (categoryId: number | null) => {
+    if (categoryId === null) return false;
+    if (dynamicCategoryMap[categoryId]) {
+      return dynamicCategoryMap[categoryId].tam_yol_ids?.includes(1) ?? false;
+    }
+    return defaultIsPharmaceuticalCategory(categoryId);
+  };
+
+  // Helper for quick zero-stock lookup
+  const zeroStockBarcodes = useMemo(() => {
+    return new Set(data?.stok_sifir_listesi?.map((item: any) => item.barkod) || []);
+  }, [data]);
+
+  const handleAddToYokListesi = async (urun: any) => {
+    try {
+      const gln = data?.gln || 'local';
+      const content = await (window as any).go.main.App.LoadLocalJSON(gln, "yok_listesi.json");
+      let items = [];
+      if (content && content !== '{}') {
+        items = JSON.parse(content);
+      }
+      
+      if (items.some((i: any) => i.barcode === urun.v1)) {
+        alert("Bu ürün zaten yok listenizde kayıtlı.");
+        return;
+      }
+      
+      const newItem = {
+        barcode: urun.v1,
+        name: urun.v2,
+        depo: urun.v91 || 'DEPO_YOK',
+        addedAt: new Date().toISOString(),
+        notes: "Sipariş Önerisinden Eklendi"
+      };
+      
+      const updated = [newItem, ...items];
+      await (window as any).go.main.App.SaveLocalJSON(gln, "yok_listesi.json", JSON.stringify(updated));
+      alert("Ürün başarıyla Yok Listesine eklendi.");
+    } catch (err) {
+      console.error("Yok listesine eklenirken hata oluştu:", err);
+      alert("Hata: Yok listesine eklenemedi.");
+    }
+  };
+
+  const handleSaveProductCategory = async (barcode: string, categoryId: number) => {
+    try {
+      const res = await (window as any).go.main.App.RunCategoryAction("assign", JSON.stringify({ barcode, category_id: categoryId }));
+      const result = JSON.parse(res);
+      if (result.status === "success") {
+        alert("Ürün kategorisi başarıyla güncellendi. Yeni kategorinin geçerli olması için analizi tetikleyebilirsiniz.");
+        setEditingCategoryProduct(null);
+        loadDbCategories();
+      } else {
+        alert("Hata: " + result.message);
+      }
+    } catch (err) {
+      console.error("Kategori güncellenirken hata:", err);
+      alert("Hata: Kategori güncellenemedi.");
+    }
+  };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isKritik, setIsKritik] = useState(false); // Yeni eklendi
   const [expandedCategory, setExpandedCategory] = useState<'ilac' | 'disi' | null>(null);
@@ -619,57 +747,58 @@ export default function OrderCockpit() {
     };
   }, []);
 
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        let res;
-        if (isWails) {
-          res = await fetchEczaneData("");
-        } else {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return router.push('/register');
-          res = await fetchEczaneData(user.id);
-        }
-        if (!res) { setLoading(false); return; }
-        setData(res);
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      let res;
+      if (isWails) {
+        res = await fetchEczaneData("");
+      } else {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return router.push('/register');
+        res = await fetchEczaneData(user.id);
+      }
+      if (!res) { setLoading(false); return; }
+      setData(res);
 
-        console.log('🔍 DASHBOARD DEBUG - Gruplar:');
-        if (res.gruplar && Array.isArray(res.gruplar)) {
-          const testBarkod = '8699745001834';
-          for (const grup of res.gruplar) {
-            for (const detay of grup.detaylar || []) {
-              if (detay.v1 === testBarkod) {
-                console.log(`✅ Bulundu - ${testBarkod}:`, detay);
-                break;
-              }
+      console.log('🔍 DASHBOARD DEBUG - Gruplar:');
+      if (res.gruplar && Array.isArray(res.gruplar)) {
+        const testBarkod = '8699745001834';
+        for (const grup of res.gruplar) {
+          for (const detay of grup.detaylar || []) {
+            if (detay.v1 === testBarkod) {
+              console.log('✅ Bulundu - ' + testBarkod + ':', detay);
+              break;
             }
           }
         }
+      }
 
-        let savedCartObj: Record<string, any> = {};
-        if (isWails) {
-          const cached = await (window as any).go.main.App.LoadLocalJSON(res.gln || "local", "cart.json");
-          if (cached && cached !== '{}') savedCartObj = JSON.parse(cached);
-        } else {
-          const { data: { user } } = await supabase.auth.getUser();
-          const { data: cartData } = await supabase.from('kullanici_sepetleri').select('sepet').eq('eczane_id', user?.id).maybeSingle();
-          savedCartObj = cartData?.sepet ? (typeof cartData.sepet === 'string' ? JSON.parse(cartData.sepet) : cartData.sepet) : {};
-        }
+      let savedCartObj: Record<string, any> = {};
+      if (isWails) {
+        const cached = await (window as any).go.main.App.LoadLocalJSON(res.gln || "local", "cart.json");
+        if (cached && cached !== '{}') savedCartObj = JSON.parse(cached);
+      } else {
+        const { data: { user } } = await supabase.auth.getUser();
+        const { data: cartData } = await supabase.from('kullanici_sepetleri').select('sepet').eq('eczane_id', user?.id).maybeSingle();
+        savedCartObj = cartData?.sepet ? (typeof cartData.sepet === 'string' ? JSON.parse(cartData.sepet) : cartData.sepet) : {};
+      }
 
-        const initialCart: Record<string, CartItem> = {};
-        Object.keys(savedCartObj).forEach(b => { initialCart[b] = { ...savedCartObj[b], inCart: true }; });
-        if (res.gruplar) {
-          res.gruplar.forEach((g: any) => {
-            g.detaylar.forEach((u: any) => {
-              if (!initialCart[u.v1] && u.v26 > 0) initialCart[u.v1] = { qty: u.v26, mf: 0, inCart: false, ad: u.v2, depo: u.v91 };
-            });
+      const initialCart: Record<string, CartItem> = {};
+      Object.keys(savedCartObj).forEach(b => { initialCart[b] = { ...savedCartObj[b], inCart: true }; });
+      if (res.gruplar) {
+        res.gruplar.forEach((g: any) => {
+          g.detaylar.forEach((u: any) => {
+            if (!initialCart[u.v1] && u.v26 > 0) initialCart[u.v1] = { qty: u.v26, mf: 0, inCart: false, ad: u.v2, depo: u.v91 };
           });
-        }
-        setCart(initialCart);
-      } catch (err) { console.error("Sistem hatası:", err); }
-      finally { setLoading(false); }
-    };
+        });
+      }
+      setCart(initialCart);
+    } catch (err) { console.error("Sistem hatası:", err); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => {
     loadData();
   }, [router]);
 
@@ -770,6 +899,7 @@ export default function OrderCockpit() {
       .map((g: any) => {
         const filteredDetaylar = g.detaylar.filter((urun: any) => {
           if (ignoredBarkods.has(urun.v1)) return false;
+          if (showOnlyZeroStock && !zeroStockBarcodes.has(urun.v1)) return false;
           const matchSearch = q === "" || (urun.v2 || "").toLowerCase().includes(q) || (urun.v1 || "").toLowerCase().includes(q);
           if (q !== "" && !matchSearch) return false;
           const itemCart = cart[urun.v1] || { qty: 0 };
@@ -793,7 +923,7 @@ export default function OrderCockpit() {
       })
       .filter((g: any) => {
         if (g.detaylar.length === 0) return false;
-        const isPharmaceutical = isPharmaceuticalCategory(g.kategori_id || 0);
+        const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
         if (type === 'ilac' && !isPharmaceutical) return false;
         if (type === 'disi' && isPharmaceutical) return false;
 
@@ -843,8 +973,8 @@ export default function OrderCockpit() {
       });
   };
 
-  const filteredIlacGroups = useMemo(() => getFilteredGroups('ilac'), [data, searchQuery, ignoredBarkods, showOnlyOrders, showOnlyEsdesiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder]);
-  const filteredDisiGroups = useMemo(() => getFilteredGroups('disi'), [data, searchQuery, ignoredBarkods, showOnlyOrders, showOnlyEsdesiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder]);
+  const filteredIlacGroups = useMemo(() => getFilteredGroups('ilac'), [data, searchQuery, ignoredBarkods, showOnlyOrders, showOnlyEsdesiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, showOnlyZeroStock]);
+  const filteredDisiGroups = useMemo(() => getFilteredGroups('disi'), [data, searchQuery, ignoredBarkods, showOnlyOrders, showOnlyEsdesiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, showOnlyZeroStock]);
 
   const cartSummary = useMemo(() => {
     const vals = Object.values(cart).filter(c => c.inCart && c.qty > 0);
@@ -871,11 +1001,11 @@ export default function OrderCockpit() {
   );
 
   if (data?.isWailsSetupRequired) {
-    return <WailsSetupView onSetupComplete={(newData: any) => { setData(newData); }} />;
+    return <WailsSetupView onSetupComplete={async (newData: any) => { await loadData(); }} />;
   }
 
   if (data?.isWailsSyncRequired) {
-    return <WailsSyncView settings={data} onSyncComplete={(newData: any) => { setData(newData); }} />;
+    return <WailsSyncView settings={data} onSyncComplete={async (newData: any) => { await loadData(); }} />;
   }
 
   // Depolar sekmesi sidebar'ı gizler ve tam ekran açılır
@@ -884,34 +1014,8 @@ export default function OrderCockpit() {
   if (isDepolarTab) {
     return (
       <div className={cn("flex h-screen bg-stone-50 text-stone-900 font-sans overflow-hidden", isWails && "wails-compact")}>
-        {/* Depolar tam ekran — sidebar yok */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {/* Mini üst bar */}
-          <div className="flex items-center gap-3 px-4 py-2.5 bg-white border-b border-stone-100 shrink-0">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 bg-stone-900 rounded-lg flex items-center justify-center">
-                <span className="text-white font-black text-xs tracking-tighter">N</span>
-              </div>
-              <span className="font-black text-stone-900 text-sm tracking-tight">Nexus</span>
-              <span className="text-[10px] font-bold text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded-md">PRO</span>
-            </div>
-            <div className="w-px h-4 bg-stone-200" />
-            <div className="flex items-center gap-1.5 text-blue-600">
-              <Truck size={14} />
-              <span className="text-[12px] font-black">Depolar</span>
-            </div>
-            <div className="flex-1" />
-            <button
-              onClick={() => setActiveTab('oneri')}
-              className="flex items-center gap-1.5 text-[11px] font-semibold text-stone-500 hover:text-stone-800 px-3 py-1.5 rounded-lg hover:bg-stone-100 transition-colors"
-            >
-              <Menu size={13} />
-              Ana Menü
-            </button>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <Depolar cart={cart} gln={data?.gln || 'local'} />
-          </div>
+          <Depolar cart={cart} gln={data?.gln || 'local'} onBack={() => setActiveTab('oneri')} />
         </div>
       </div>
     );
@@ -1000,6 +1104,7 @@ export default function OrderCockpit() {
             <SideNavItem id="depolar" icon={Truck} label="Depolar" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="blue" />
             <NavDivider label="Takip" />
             <SideNavItem id="yok_listesi" icon={ListX} label="Yok Listem" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="red" />
+            <SideNavItem id="iadeler" icon={RotateCcw} label="İadeler" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="emerald" />
             {/* <SideNavItemDisabled icon={Star} label="PSF'si Hatalı" /> */}
             <SideNavItem id="mr" icon={AlertTriangle} label="Miad Riski" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="amber" />
             <SideNavItem id="st" icon={PackageX} label="Stoğu Tükenmiş" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="rose" />
@@ -1031,7 +1136,7 @@ export default function OrderCockpit() {
 
           {/* ARAÇLAR */}
           <NavSection label="Araçlar" open={menuStates.araclar} onToggle={() => toggleMenu('araclar')}>
-            <SideNavItemDisabled icon={Wrench} label="İçerik yakında..." />
+            <SideNavItem id="kategori_yonetimi" icon={Layers} label="Kategori Yönetimi" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="teal" />
           </NavSection>
 
         </nav>
@@ -1127,6 +1232,14 @@ export default function OrderCockpit() {
                           isKritik ? "bg-red-600 border-red-600 text-white shadow-sm shadow-red-200" : "bg-white border-stone-200 text-stone-500 hover:border-red-200 hover:text-red-600")}>
                         <Zap size={14} className={isKritik ? "fill-white" : ""} />
                         <span>Kritik</span>
+                      </button>
+
+                      {/* Stoğu Tükenmiş Butonu */}
+                      <button onClick={() => setShowOnlyZeroStock(!showOnlyZeroStock)}
+                        className={cn("h-10 md:h-9 px-4 md:px-3 rounded-xl border font-bold text-[11px] transition-all flex items-center gap-1.5 shrink-0",
+                          showOnlyZeroStock ? "bg-rose-600 border-rose-600 text-white shadow-sm shadow-rose-200" : "bg-white border-stone-200 text-stone-500 hover:border-rose-200 hover:text-rose-600")}>
+                        <PackageX size={14} className={showOnlyZeroStock ? "fill-white" : ""} />
+                        <span>Stoğu Tükenmiş</span>
                       </button>
 
                       {/* Arama (flex-1 sayesinde kalan alanı kaplar) */}
@@ -1237,7 +1350,6 @@ export default function OrderCockpit() {
                               <col style={{ width: '56px' }} />
                               <col style={{ width: '56px' }} />
                               <col style={{ width: '68px' }} />
-                              <col style={{ width: '36px' }} />
                             </colgroup>
                             <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
                               <tr>
@@ -1247,7 +1359,6 @@ export default function OrderCockpit() {
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Hız/ay</th>
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Stok</th>
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">İHT</th>
-                                <th className="py-4"></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1268,6 +1379,9 @@ export default function OrderCockpit() {
                                   setSelectedBarkods={setSelectedBarkods}
                                   onGrupDetail={setSelectedGrup}
                                   mainCategory={mainCategory} // Yeni: kategori bilgisi gönderiliyor
+                                  onEditCategory={setEditingCategoryProduct}
+                                  onAddToYokListesi={handleAddToYokListesi}
+                                  onEditProductDetails={setEditingDbProduct}
                                 />
                               ))}
                             </tbody>
@@ -1297,13 +1411,15 @@ export default function OrderCockpit() {
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}
-                {activeTab === 'os' && <DeadStockReport data={data?.olu_stok_listesi || []} />}
+                {activeTab === 'os' && <DeadStockReport data={data?.olu_stok_listesi || []} gln={data?.gln || 'local'} />}
                 {activeTab === 'mr' && <ExpiryReport data={data?.miad_risk_listesi || []} />}
                 {activeTab === 'st' && <OutOfStockReport data={data?.stok_sifir_listesi || []} />}
                 {activeTab === 'ayarlar' && <AyarlarPage supabase={supabase} />}
+                {activeTab === 'kategori_yonetimi' && <CategoryManager />}
+                {activeTab === 'iadeler' && <IadelerPage gln={data?.gln || 'local'} />}
                 {/* {activeTab === 'kardes' && <KardesEczanePage />} */}
                 {['nb', 'para'].includes(activeTab) && (
-                  <DataTable data={activeTab === 'nb' ? (data?.nobet_listesi || []) : (data?.nakit_optimizasyon || [])} type={activeTab} />
+                  <DataTable data={activeTab === 'nb' ? (data?.nobet_listesi || []) : (data?.nakit_optimizasyon || [])} type={activeTab} gln={data?.gln || 'local'} />
                 )}
               </motion.div>
             )}
@@ -1566,7 +1682,34 @@ export default function OrderCockpit() {
             grup={selectedGrup}
             rawGrup={data?.gruplar?.find((g: any) => g.lider_adi === selectedGrup.lider_adi)}
             onClose={() => setSelectedGrup(null)}
-            getBreadcrumb={getBreadcrumb}
+            getBreadcrumb={getDynamicBreadcrumb}
+          />
+        )}
+      </AnimatePresence>
+
+            {/* KATEGORİ DÜZENLEME MODALI */}
+      <AnimatePresence>
+        {editingCategoryProduct && (
+          <CategoryEditModal
+            urun={editingCategoryProduct}
+            categories={dbCategories}
+            onClose={() => setEditingCategoryProduct(null)}
+            onSave={handleSaveProductCategory}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* İLAÇ DB DÜZENLEME MODALI */}
+      <AnimatePresence>
+        {editingDbProduct && (
+          <ProductDbModal
+            urun={editingDbProduct}
+            categories={dbCategories}
+            onClose={() => setEditingDbProduct(null)}
+            onSave={async () => {
+              setEditingDbProduct(null);
+              await loadData();
+            }}
           />
         )}
       </AnimatePresence>
@@ -1585,7 +1728,7 @@ export default function OrderCockpit() {
                   <h3 className="font-black text-stone-900 text-lg leading-tight">{selectedAnalysis.v2}</h3>
                   <p className="text-xs font-mono text-stone-400 mt-1">Barkod: {selectedAnalysis.v1}</p>
                   {selectedAnalysis.kategori_id && (
-                    <span className="text-xs font-medium text-teal-600 mt-1.5 bg-teal-50 inline-block px-2 py-0.5 rounded-lg">{getBreadcrumb(selectedAnalysis.kategori_id)}</span>
+                    <span className="text-xs font-medium text-teal-600 mt-1.5 bg-teal-50 inline-block px-2 py-0.5 rounded-lg">{getDynamicBreadcrumb(selectedAnalysis.kategori_id)}</span>
                   )}
                 </div>
                 <button onClick={() => setSelectedAnalysis(null)}
@@ -2022,7 +2165,7 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
   );
 }
 
-function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, mainCategory }: any) {
+function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, mainCategory, onEditCategory, onAddToYokListesi, onEditProductDetails }: any) {
   const [isOpen, setIsOpen] = useState(true);
   const originalCount = grup.original_count ?? grup.detaylar.length;
   const isSingle = originalCount === 1;
@@ -2034,7 +2177,7 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
   const omurGun = totalDailySpeed > 0 && totalStock > 0 ? Math.round(totalStock / totalDailySpeed) : null;
   const grupBaslik = (grup.lider_adi || '').split(' ')[0] + ' GRUBU';
 
-  const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree };
+  const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails };
 
   return (
     <>
@@ -2114,7 +2257,8 @@ const PERIODS = [
 
 const TableProductRow = React.memo(function TableProductRow({
   urun, itemCart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis,
-  selectedBarkods, setSelectedBarkods, isGrouped, isLastChild, showTree
+  selectedBarkods, setSelectedBarkods, isGrouped, isLastChild, showTree,
+  onEditCategory, onAddToYokListesi, onEditProductDetails
 }: any) {
   const [period, setPeriod] = useState<number | string>(30);
   const [opt, setOpt] = useState<string | null>(null);
@@ -2181,12 +2325,41 @@ const TableProductRow = React.memo(function TableProductRow({
               {urun.v2}
             </span>
           </div>
-          <div className="flex items-center gap-2 mt-1.5">
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
             <button onClick={() => copyFn(urun.v1)}
               className="font-mono text-[10px] text-stone-400 hover:text-teal-600 bg-stone-50 px-2 py-0.5 rounded border border-stone-200 transition-colors flex items-center gap-1">
               {copiedId === urun.v1 ? <><Check size={8} /> Kopyalandı</> : <><Copy size={8} /> {urun.v1}</>}
             </button>
-            {urun.v91 && <span className="text-[10px] text-stone-400 font-medium">{urun.v91}</span>}
+            
+            <button onClick={() => {
+              updateCart(urun.v1, need, undefined, urun);
+              toggleCartItem(urun.v1, urun);
+            }}
+              className={cn("flex items-center gap-1 px-2 py-0.5 rounded border transition-all text-[10px] font-bold",
+                inCart 
+                  ? "bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100" 
+                  : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50 hover:border-stone-300"
+              )}>
+              <ShoppingCart size={10} /> {inCart ? "Sepette" : "Sepete Ekle"}
+            </button>
+
+            <button onClick={() => onEditCategory && onEditCategory(urun)}
+              className="p-1 hover:text-blue-600 bg-white hover:bg-blue-50 text-stone-400 rounded border border-stone-200 hover:border-blue-200 transition-colors flex items-center justify-center shrink-0"
+              title="Kategoriyi Düzenle">
+              <Layers size={11} />
+            </button>
+
+            <button onClick={() => onAddToYokListesi && onAddToYokListesi(urun)}
+              className="p-1 hover:text-rose-600 bg-white hover:bg-rose-50 text-stone-400 rounded border border-stone-200 hover:border-rose-200 transition-colors flex items-center justify-center shrink-0"
+              title="Yok Listesine Ekle">
+              <ListX size={11} />
+            </button>
+
+            <button onClick={() => onEditProductDetails && onEditProductDetails(urun)}
+              className="p-1 hover:text-indigo-600 bg-white hover:bg-indigo-50 text-stone-400 rounded border border-stone-200 hover:border-indigo-200 transition-colors flex items-center justify-center shrink-0"
+              title="İlaç Bilgilerini Düzenle (master_db)">
+              <Settings size={11} />
+            </button>
           </div>
         </div>
       </td>
@@ -2223,22 +2396,14 @@ const TableProductRow = React.memo(function TableProductRow({
           {need}
         </button>
       </td>
-      <td className="px-2 py-4 text-center align-middle hidden sm:table-cell">
-        <button onClick={() => {
-          updateCart(urun.v1, need, undefined, urun);
-          toggleCartItem(urun.v1, urun);
-        }}
-          className={cn("h-8 w-8 flex items-center justify-center rounded-lg border-2 transition-all mx-auto",
-            inCart ? "bg-teal-600 text-white border-teal-600" : "bg-white text-stone-400 border-stone-200 hover:border-teal-400 hover:text-teal-600")}>
-          {inCart ? <Check size={14} /> : <ShoppingCart size={14} />}
-        </button>
-      </td>
     </tr>
   );
 }, (prev, next) => {
   return prev.itemCart.qty === next.itemCart.qty &&
     prev.itemCart.inCart === next.itemCart.inCart &&
     prev.selectedBarkods.has(prev.urun.v1) === next.selectedBarkods.has(next.urun.v1) &&
+    prev.urun.kategori_id === next.urun.kategori_id &&
+    prev.urun.v2 === next.urun.v2 &&
     prev.showTree === next.showTree &&
     prev.isLastChild === next.isLastChild;
 });
@@ -2398,6 +2563,95 @@ function GrupDetailModal({ grup, onClose, getBreadcrumb, rawGrup }: any) {
 }
 
 
+function CategoryEditModal({ urun, categories, onClose, onSave }: any) {
+  const [selectedCatId, setSelectedCatId] = useState<number>(urun.kategori_id || 2);
+
+  // Filter out 'ilac' (1) and build a tree-like hierarchy list
+  const getSortedTreeList = () => {
+    const list: any[] = [];
+    const recurse = (parentId: number | null, indent: number) => {
+      const children = categories.filter((c: any) => c.ust_kategori_id === parentId && c.id !== 1);
+      children.sort((a: any, b: any) => a.isim.localeCompare(b.isim, 'tr'));
+      children.forEach((child: any) => {
+        list.push({ ...child, indent });
+        recurse(child.id, indent + 1);
+      });
+    };
+    recurse(null, 0);
+    return list;
+  };
+
+  const treeList = getSortedTreeList();
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-900/50 backdrop-blur-sm p-4"
+      onClick={onClose}>
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e: any) => e.stopPropagation()}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col p-6 space-y-4">
+        
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-stone-900 text-base">Kategori Düzenle</h3>
+          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg bg-stone-100 hover:bg-red-50 hover:text-red-500 text-stone-400 transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Ürün Adı</label>
+          <div className="font-bold text-stone-800 text-sm">{urun.v2}</div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Barkod</label>
+          <div className="font-mono text-stone-500 text-xs">{urun.v1}</div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Kategori Seçin</label>
+          <select
+            value={selectedCatId}
+            onChange={e => setSelectedCatId(Number(e.target.value))}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-xs transition-all font-medium text-slate-800"
+          >
+            {/* Always fallback categories if empty */}
+            {treeList.length > 0 ? (
+              treeList.map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {"— ".repeat(c.indent) + c.isim}
+                </option>
+              ))
+            ) : (
+              categories.map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {c.isim}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+
+        <div className="flex gap-2 justify-end pt-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl font-bold text-xs transition-all"
+          >
+            Vazgeç
+          </button>
+          <button
+            onClick={() => onSave(urun.v1, selectedCatId)}
+            className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold text-xs transition-all"
+          >
+            Kaydet
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+
 function parseMiadStr(raw: string | undefined | null): string {
   if (!raw) return 'Belirsiz';
   const str = String(raw);
@@ -2434,17 +2688,148 @@ function AyarlarPage({ supabase }: { supabase: any }) {
     });
   }, []);
 
+  const [localSettings, setLocalSettings] = React.useState({
+    eczane_adi: "",
+    gln: "",
+    software: "Botanik",
+    server_instance: "",
+    database: ""
+  });
+  const [savingSettings, setSavingSettings] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isWails) {
+      const loadSettings = async () => {
+        try {
+          const content = await (window as any).go.main.App.LoadSettings();
+          if (content && content !== '{}') {
+            const parsed = JSON.parse(content);
+            setLocalSettings({
+              eczane_adi: parsed.eczane_adi || "",
+              gln: parsed.gln || "",
+              software: parsed.software || "Botanik",
+              server_instance: parsed.server_instance || "",
+              database: parsed.database || ""
+            });
+          }
+        } catch (err) {
+          console.error("Error loading settings:", err);
+        }
+      };
+      loadSettings();
+    }
+  }, []);
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    try {
+      await (window as any).go.main.App.SaveSettings(JSON.stringify(localSettings));
+      alert("Ayarlar başarıyla kaydedildi.");
+    } catch (err) {
+      console.error("Error saving settings:", err);
+      alert("Hata: Ayarlar kaydedilemedi.");
+    }
+    setSavingSettings(false);
+  };
+
   if (isWails) {
     return (
-      <div className="max-w-xl mx-auto space-y-4">
-        <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm text-center">
-          <div className="h-12 w-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-slate-100">
-            <Settings size={22} />
+      <div className="max-w-xl mx-auto space-y-6">
+        <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="p-3 bg-slate-900 text-white rounded-2xl">
+              <Settings size={22} />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-800 tracking-tight">Yerel Uygulama Ayarları</h3>
+              <p className="text-xs text-slate-400 font-medium mt-0.5">Yerel veritabanı bağlantısı ve eczane bilgilerini düzenleyin.</p>
+            </div>
           </div>
-          <h3 className="text-lg font-black text-slate-800 tracking-tight">Ayarlar</h3>
-          <p className="text-xs text-slate-500 font-medium mt-2 leading-relaxed">
-            Masaüstü uygulaması yerel modda çalışmaktadır. Şimdilik herhangi bir ayar bulunmamaktadır.
-          </p>
+
+          <form onSubmit={handleSaveSettings} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Eczane Adı</label>
+              <input
+                type="text"
+                value={localSettings.eczane_adi}
+                onChange={e => setLocalSettings(prev => ({ ...prev, eczane_adi: e.target.value }))}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-medium text-slate-800"
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">GLN Numarası</label>
+              <input
+                type="text"
+                maxLength={13}
+                value={localSettings.gln}
+                onChange={e => setLocalSettings(prev => ({ ...prev, gln: e.target.value }))}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-mono text-slate-800"
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Eczane Otomasyon Programı</label>
+              <select
+                value={localSettings.software}
+                onChange={e => {
+                  const val = e.target.value;
+                  setLocalSettings(prev => {
+                    const next = { ...prev, software: val };
+                    if (val === "Botanik") {
+                      next.server_instance = ".\\BOTANIKSQL";
+                      next.database = "eczane";
+                    }
+                    return next;
+                  });
+                }}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-medium text-slate-800"
+              >
+                <option value="Botanik">Botanik</option>
+                <option value="Farmakom">Farmakom</option>
+              </select>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 space-y-4">
+              <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider">Veritabanı Bağlantı Ayarları</h4>
+              <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                SQL Server bağlantısı için Windows Integrated Security (Trusted Connection) kullanılır. IP veya sunucu adını girin.
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">SQL Server Instance</label>
+                <input
+                  type="text"
+                  placeholder="Örn: .\BOTANIKSQL veya localhost"
+                  value={localSettings.server_instance}
+                  onChange={e => setLocalSettings(prev => ({ ...prev, server_instance: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-mono text-slate-800"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Database Adı</label>
+                <input
+                  type="text"
+                  placeholder="Örn: eczane veya FARMAKOM"
+                  value={localSettings.database}
+                  onChange={e => setLocalSettings(prev => ({ ...prev, database: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-mono text-slate-800"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={savingSettings}
+              className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
+            >
+              {savingSettings ? "Kaydediliyor..." : "Ayarları Kaydet"}
+            </button>
+          </form>
         </div>
       </div>
     );
@@ -2532,10 +2917,56 @@ function EmptyState() {
   );
 }
 
-function DataTable({ data, type }: { data: any[], type: string }) {
+function DataTable({ data, type, gln }: { data: any[], type: string, gln: string }) {
   const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
   const [cartQty, setCartQty] = useState<Record<string, number>>({});
   const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
+  const [addedToReturns, setAddedToReturns] = useState<Record<string, boolean>>({});
+
+  const addToReturnsList = async (item: any) => {
+    try {
+      const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
+      let currentList: any[] = [];
+      const barkod = item.barkod;
+      const ad = item.ad || item.urun_adi || 'Bilinmeyen Ürün';
+      const adet = Number(item.fazlalik) || 1;
+
+      if (isWails && gln) {
+        const content = await (window as any).go.main.App.LoadLocalJSON(gln, "iade_listesi.json");
+        if (content && content !== '{}') {
+          currentList = JSON.parse(content);
+        }
+      } else {
+        const cached = localStorage.getItem(`iade_listesi_${gln}`);
+        if (cached) {
+          currentList = JSON.parse(cached);
+        }
+      }
+
+      if (!Array.isArray(currentList)) {
+        currentList = [];
+      }
+
+      const existingIdx = currentList.findIndex((i: any) => i.barkod === barkod);
+      if (existingIdx > -1) {
+        currentList[existingIdx].adet = (currentList[existingIdx].adet || 0) + adet;
+      } else {
+        currentList.push({ barkod, ad, adet });
+      }
+
+      if (isWails && gln) {
+        await (window as any).go.main.App.SaveLocalJSON(gln, "iade_listesi.json", JSON.stringify(currentList));
+      } else {
+        localStorage.setItem(`iade_listesi_${gln}`, JSON.stringify(currentList));
+      }
+
+      setAddedToReturns(prev => ({ ...prev, [barkod]: true }));
+      setTimeout(() => setAddedToReturns(prev => ({ ...prev, [barkod]: false })), 2000);
+      window.dispatchEvent(new CustomEvent('nexus:iadeListesiUpdated'));
+    } catch (err) {
+      console.error("İadeye eklenirken hata oluştu:", err);
+    }
+  };
 
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -2740,26 +3171,37 @@ function DataTable({ data, type }: { data: any[], type: string }) {
           <div key={i} className="p-4">
             <p className="font-bold text-stone-800 text-[13px] mb-3 leading-snug">{item.ad || item.urun_adi || "Bilinmeyen Ürün"}</p>
             {type === 'para' && (
-              <div className="flex items-center gap-2 justify-between bg-white px-4 py-3 rounded-xl border border-stone-200/60 shadow-sm">
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest mb-0.5">Fazla</span>
-                  <span className="text-red-500 font-black text-sm">-{item.fazlalik}</span>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 justify-between bg-white px-4 py-3 rounded-xl border border-stone-200/60 shadow-sm">
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest mb-0.5">Fazla</span>
+                    <span className="text-red-500 font-black text-sm">-{item.fazlalik}</span>
+                  </div>
+                  <div className="w-px h-6 bg-stone-100" />
+                  <div className="flex flex-col items-center">
+                    <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest mb-0.5">Ömür</span>
+                    <span className="text-stone-600 font-bold text-[13px]">{item.stok_omru} Gün</span>
+                  </div>
+                  <div className="w-px h-6 bg-stone-100" />
+                  <div className="flex flex-col items-end">
+                    <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest mb-0.5">Değer</span>
+                    {(() => {
+                      const psf = item.psf || item.v87 || 0;
+                      const fazla = item.fazlalik || 0;
+                      const val = psf && fazla ? (Number(psf) * Number(fazla)) : null;
+                      return val ? <span className="font-black text-emerald-600 text-sm">₺{val.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> : <span className="text-stone-300 font-bold text-sm">—</span>;
+                    })()}
+                  </div>
                 </div>
-                <div className="w-px h-6 bg-stone-100" />
-                <div className="flex flex-col items-center">
-                  <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest mb-0.5">Ömür</span>
-                  <span className="text-stone-600 font-bold text-[13px]">{item.stok_omru} Gün</span>
-                </div>
-                <div className="w-px h-6 bg-stone-100" />
-                <div className="flex flex-col items-end">
-                  <span className="text-[9px] font-black text-stone-400 uppercase tracking-widest mb-0.5">Değer</span>
-                  {(() => {
-                    const psf = item.psf || item.v87 || 0;
-                    const fazla = item.fazlalik || 0;
-                    const val = psf && fazla ? (Number(psf) * Number(fazla)) : null;
-                    return val ? <span className="font-black text-emerald-600 text-sm">₺{val.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> : <span className="text-stone-300 font-bold text-sm">—</span>;
-                  })()}
-                </div>
+                {item.barkod && (
+                  <button
+                    onClick={() => addToReturnsList(item)}
+                    className={cn("w-full py-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5",
+                      addedToReturns[item.barkod] ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-stone-600 border-stone-200 active:bg-emerald-50")}
+                  >
+                    {addedToReturns[item.barkod] ? <><Check size={12} />İadeye Eklendi</> : <><RefreshCw size={12} />İadeye Ekle</>}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -2781,6 +3223,9 @@ function DataTable({ data, type }: { data: any[], type: string }) {
                   {h} {sortField === field ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
                 </th>
               ))}
+              {type === 'para' && (
+                <th className="px-6 py-3.5 font-black text-stone-400 uppercase tracking-widest text-[10px] select-none">İade</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-50">
@@ -2799,6 +3244,17 @@ function DataTable({ data, type }: { data: any[], type: string }) {
                     </td>
                     <td className="px-6 py-4 text-red-500 font-bold text-xs">-{item.fazlalik}</td>
                     <td className="px-6 py-4 text-stone-500 text-xs">{item.stok_omru} Gün</td>
+                    <td className="px-6 py-4 text-xs">
+                      {item.barkod ? (
+                        <button
+                          onClick={() => addToReturnsList(item)}
+                          className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all whitespace-nowrap",
+                            addedToReturns[item.barkod] ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-stone-600 border-stone-200 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700")}
+                        >
+                          {addedToReturns[item.barkod] ? <><Check size={10} />Eklendi</> : <><RefreshCw size={10} />İadeye Ekle</>}
+                        </button>
+                      ) : <span className="text-stone-300">—</span>}
+                    </td>
                   </>
                 )}
               </tr>
@@ -2815,6 +3271,8 @@ function WailsSetupView({ onSetupComplete }: { onSetupComplete: (data: any) => v
   const [gln, setGln] = React.useState('');
   const [eczaneAdi, setEczaneAdi] = React.useState('');
   const [software, setSoftware] = React.useState('Botanik');
+  const [serverInstance, setServerInstance] = React.useState('.\\BOTANIKSQL');
+  const [databaseName, setDatabaseName] = React.useState('eczane');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -2831,7 +3289,9 @@ function WailsSetupView({ onSetupComplete }: { onSetupComplete: (data: any) => v
       await (window as any).go.main.App.SaveSettings(JSON.stringify({
         software,
         gln,
-        eczane_adi: eczaneAdi
+        eczane_adi: eczaneAdi,
+        server_instance: serverInstance,
+        database: databaseName
       }));
       // Trigger database extraction and python analysis
       const resJson = await (window as any).go.main.App.TriggerSyncAndAnalysis(gln, true);
@@ -2868,10 +3328,21 @@ function WailsSetupView({ onSetupComplete }: { onSetupComplete: (data: any) => v
             <label className="text-[10px] font-black text-stone-400 uppercase tracking-wider">Eczane Programı</label>
             <select
               value={software}
-              onChange={(e) => setSoftware(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSoftware(val);
+                if (val === 'Botanik') {
+                  setServerInstance('.\\BOTANIKSQL');
+                  setDatabaseName('eczane');
+                } else if (val === 'Farmakom') {
+                  setServerInstance('');
+                  setDatabaseName('');
+                }
+              }}
               className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-stone-50 text-sm font-semibold text-stone-800 focus:outline-none focus:border-teal-500 focus:bg-white transition-all"
             >
               <option value="Botanik">Botanik SQL</option>
+              <option value="Farmakom">Farmakom SQL</option>
             </select>
           </div>
 
@@ -2895,6 +3366,28 @@ function WailsSetupView({ onSetupComplete }: { onSetupComplete: (data: any) => v
               value={eczaneAdi}
               onChange={(e) => setEczaneAdi(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl border border-stone-200 text-sm font-semibold text-stone-800 placeholder-stone-300 focus:outline-none focus:border-teal-500 transition-all"
+            />
+          </div>
+
+          <div className="space-y-1.5 pt-2 border-t border-slate-100">
+            <label className="text-[10px] font-black text-stone-400 uppercase tracking-wider">SQL Server Instance</label>
+            <input
+              type="text"
+              placeholder="Örn: .\BOTANIKSQL"
+              value={serverInstance}
+              onChange={(e) => setServerInstance(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl border border-stone-200 text-sm font-semibold text-stone-800 placeholder-stone-300 focus:outline-none focus:border-teal-500 transition-all font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-stone-400 uppercase tracking-wider">Database Adı</label>
+            <input
+              type="text"
+              placeholder="Örn: eczane"
+              value={databaseName}
+              onChange={(e) => setDatabaseName(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl border border-stone-200 text-sm font-semibold text-stone-800 placeholder-stone-300 focus:outline-none focus:border-teal-500 transition-all font-mono"
             />
           </div>
 

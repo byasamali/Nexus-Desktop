@@ -24,9 +24,11 @@ window.go = {
       LoadLocalJSON: (gln, filename) => ipcRenderer.invoke('wails:LoadLocalJSON', gln, filename),
       SaveLocalJSON: (gln, filename, content) => ipcRenderer.invoke('wails:SaveLocalJSON', gln, filename, content),
       TriggerSyncAndAnalysis: (gln, fullSync) => ipcRenderer.invoke('wails:TriggerSyncAndAnalysis', gln, fullSync),
+      RunCategoryAction: (action, paramsJSON) => ipcRenderer.invoke('wails:RunCategoryAction', action, paramsJSON),
       StartDepoProxy: (targetRaw) => Promise.resolve(targetRaw), // In Electron, <webview> handles original URL directly!
       StopDepoProxy: (proxyURL) => Promise.resolve(),
-      OpenURLInBrowser: (targetURL) => ipcRenderer.invoke('wails:OpenURLInBrowser', targetURL)
+      OpenURLInBrowser: (targetURL) => ipcRenderer.invoke('wails:OpenURLInBrowser', targetURL),
+      GetWebviewPreloadPath: () => ipcRenderer.invoke('wails:GetWebviewPreloadPath')
     }
   }
 };
