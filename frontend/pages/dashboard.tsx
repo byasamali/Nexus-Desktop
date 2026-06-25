@@ -578,6 +578,14 @@ export default function OrderCockpit() {
   const [selectedBarkods, setSelectedBarkods] = useState<Set<string>>(new Set());
   const [visibleGroupsCount, setVisibleGroupsCount] = useState(20);
   const [filterEsdegersiz, setFilterEsdegersiz] = useState<'active' | 'passive' | 'excluded'>('active');
+  const [selectedDaysLimit, setSelectedDaysLimit] = useState<number | null>(null);
+
+  const getDaysUntilMonthEnd = () => {
+    const now = new Date();
+    const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return Math.max(1, lastDayOfMonth.getDate() - now.getDate());
+  };
+
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const cartSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
@@ -1084,6 +1092,22 @@ export default function OrderCockpit() {
           }
           const uColor = (urun.v82 || "").toUpperCase();
           if (selectedColors.length > 0 && !selectedColors.includes(uColor)) return false;
+
+          // Stok Ömrü Filtresi
+          if (selectedDaysLimit !== null) {
+            const dailySpeed = urun.v20 || 0;
+            const stock = urun.v4 || 0;
+            if (stock <= 0) {
+              // Stok yoksa ömür 0 gündür (seçilen limitin altındadır, gösterilir)
+            } else if (dailySpeed <= 0) {
+              // Stok var ama satış hızı yoksa ömür sonsuzdur, filtreden elenir
+              return false;
+            } else {
+              const stockLifeDays = stock / dailySpeed;
+              if (stockLifeDays >= selectedDaysLimit) return false;
+            }
+          }
+
           return true;
         });
         return { ...g, detaylar: filteredDetaylar, original_count: g.detaylar.length };
@@ -1138,7 +1162,7 @@ export default function OrderCockpit() {
       });
   };
 
-  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, showOnlyOrders, filterEsdegersiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik]);
+  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, showOnlyOrders, filterEsdegersiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik, selectedDaysLimit]);
 
   const filteredIlacGroups = useMemo(() => {
     return filteredGroups.filter(g => isDynamicPharmaceuticalCategory(g.kategori_id || 0));
@@ -1487,6 +1511,38 @@ export default function OrderCockpit() {
 
                       <div className="w-px h-5 bg-stone-200 shrink-0" />
 
+                      {/* Stok Ömrü Filtresi */}
+                      <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg border border-stone-200/60 shrink-0 h-8">
+                        <span className="text-[9px] font-bold text-stone-500 px-2 select-none whitespace-nowrap">Stok Ömrü &lt;</span>
+                        {[
+                          { label: 'Tümü', value: null },
+                          { label: '2G', value: 2 },
+                          { label: '7G', value: 7 },
+                          { label: '15G', value: 15 },
+                          { label: '30G', value: 30 },
+                          { label: 'Ay Sonu', value: 'month-end' },
+                        ].map(opt => {
+                          const limit = opt.value === 'month-end' ? getDaysUntilMonthEnd() : opt.value as number | null;
+                          const isActive = selectedDaysLimit === limit;
+                          return (
+                            <button
+                              key={opt.label}
+                              onClick={() => setSelectedDaysLimit(limit)}
+                              className={cn(
+                                "h-7 px-2 text-[10px] font-bold rounded-md transition-all whitespace-nowrap",
+                                isActive
+                                  ? "bg-white text-stone-950 shadow-sm border border-stone-200/40"
+                                  : "text-stone-500 hover:text-stone-850"
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="w-px h-5 bg-stone-200 shrink-0" />
+
                       <button onClick={handleSelectAllVisible}
                         className="h-8 px-2.5 text-[11px] font-semibold rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-stone-300 transition-all flex items-center gap-1.5 shrink-0">
                         <Check size={10} /><span className="whitespace-nowrap">Tümünü Seç</span>
@@ -1728,6 +1784,36 @@ export default function OrderCockpit() {
                           : "bg-white text-stone-500 border-stone-200 hover:border-stone-300 hover:text-stone-700")}>
                       {showOnlyOrders && <Check size={10} className="inline mr-1" />}Sepettekiler
                     </button>
+
+                    {/* Stok Ömrü Filtresi */}
+                    <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg border border-stone-200/60 shrink-0 h-8">
+                      <span className="text-[9px] font-bold text-stone-500 px-2 select-none whitespace-nowrap">Stok Ömrü &lt;</span>
+                      {[
+                        { label: 'Tümü', value: null },
+                        { label: '2G', value: 2 },
+                        { label: '7G', value: 7 },
+                        { label: '15G', value: 15 },
+                        { label: '30G', value: 30 },
+                        { label: 'Ay Sonu', value: 'month-end' },
+                      ].map(opt => {
+                        const limit = opt.value === 'month-end' ? getDaysUntilMonthEnd() : opt.value as number | null;
+                        const isActive = selectedDaysLimit === limit;
+                        return (
+                          <button
+                            key={opt.label}
+                            onClick={() => setSelectedDaysLimit(limit)}
+                            className={cn(
+                              "h-7 px-2 text-[10px] font-bold rounded-md transition-all whitespace-nowrap",
+                              isActive
+                                ? "bg-white text-stone-950 shadow-sm border border-stone-200/40"
+                                : "text-stone-500 hover:text-stone-850"
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Sağ aksiyon grubu */}
