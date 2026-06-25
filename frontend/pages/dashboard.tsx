@@ -1627,14 +1627,12 @@ export default function OrderCockpit() {
                             <colgroup>
                               <col style={{ width: '45px' }} /> {/* Checkbox ve Çizgi Kolonu */}
                               <col /> {/* Ürün Bilgisi */}
-                              <col style={{ width: '80px' }} /> {/* Hız/ay */}
-                              <col style={{ width: '160px' }} /> {/* Sipariş */}
+                              <col style={{ width: '300px' }} /> {/* Sipariş */}
                             </colgroup>
                             <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
                               <tr>
                                 <th className="py-4"></th>
                                 <th className="py-4 px-3 text-left font-semibold text-stone-400 text-[10px] uppercase tracking-widest">Ürün Bilgisi</th>
-                                <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Hız/ay</th>
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Sipariş</th>
                               </tr>
                             </thead>
@@ -2764,7 +2762,7 @@ const TableProductRow = React.memo(function TableProductRow({
             <span
               onClick={() => openAnalysis(urun)}
               className="font-bold text-[13px] text-stone-900 truncate cursor-pointer hover:text-orange-600 transition-colors leading-snug">
-              {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
+              {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4}) (aylık ortalama: {spd30.toFixed(1)})</span>
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
@@ -2794,15 +2792,38 @@ const TableProductRow = React.memo(function TableProductRow({
         </div>
       </td>
 
-      {/* Hız/ay */}
-      <td className="px-3 py-4 text-center align-middle hidden sm:table-cell">
-        <span className="text-[12px] font-mono font-bold text-stone-700">{spd30.toFixed(1)}</span>
-      </td>
-
-      {/* Sipariş (Adet, Sepet, MF baremleri) */}
+      {/* Sipariş (Adet, Sepet, MF baremleri yan yana) */}
       <td className="px-3 py-4 text-center align-middle">
-        <div className="flex flex-col gap-1 items-center justify-center">
-          <div className="flex items-center gap-1.5 justify-center">
+        <div className="flex items-center gap-2 justify-end">
+          {/* MF Baremleri (Sol Taraf) */}
+          {baremler.length > 0 && (
+            <div className="flex flex-wrap gap-1 items-center mr-1">
+              {baremler.map((b: any, bi: number) => {
+                const isCurrentMf = inCart && itemCart.qty === b.ana && itemCart.mf === b.mf;
+                return (
+                  <button
+                    key={bi}
+                    onClick={() => {
+                      setCustomQty(b.ana);
+                      updateCart(urun.v1, b.ana, b.mf, urun, true);
+                    }}
+                    className={cn(
+                      "text-[9px] font-bold font-mono px-1.5 py-0.5 rounded border transition-all active:scale-95",
+                      isCurrentMf
+                        ? "bg-teal-600 border-teal-600 text-white font-black"
+                        : "bg-teal-50 hover:bg-teal-100 text-teal-700 border-teal-200"
+                    )}
+                    title={`${b.ana} adet alıma ${b.mf} mf`}
+                  >
+                    {b.ana}+{b.mf}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Adet Kutusu ve Sepet Butonu (Sağ Taraf) */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <input
               type="number"
               value={customQty !== null ? customQty : (inCart ? itemCart.qty : (need > 0 ? need : 1))}
@@ -2832,32 +2853,6 @@ const TableProductRow = React.memo(function TableProductRow({
               {inCart ? <Check size={18} /> : <ShoppingCart size={16} />}
             </button>
           </div>
-          {/* MF Baremleri */}
-          {baremler.length > 0 && (
-            <div className="flex flex-wrap gap-1 justify-center mt-1">
-              {baremler.map((b: any, bi: number) => {
-                const isCurrentMf = inCart && itemCart.qty === b.ana && itemCart.mf === b.mf;
-                return (
-                  <button
-                    key={bi}
-                    onClick={() => {
-                      setCustomQty(b.ana);
-                      updateCart(urun.v1, b.ana, b.mf, urun, true);
-                    }}
-                    className={cn(
-                      "text-[9px] font-bold font-mono px-1.5 py-0.5 rounded border transition-all active:scale-95",
-                      isCurrentMf
-                        ? "bg-teal-600 border-teal-600 text-white font-black"
-                        : "bg-teal-50 hover:bg-teal-100 text-teal-700 border-teal-200"
-                    )}
-                    title={`${b.ana} adet alıma ${b.mf} mf`}
-                  >
-                    {b.ana}+{b.mf}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
       </td>
 
