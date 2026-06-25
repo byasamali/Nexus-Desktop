@@ -36,7 +36,7 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(base_dir)
     
-    settings_path = os.path.join(root_dir, 'settings.json')
+    settings_path = os.path.join(base_dir, 'tenants', 'settings.json')
     if not os.path.exists(settings_path):
         print(f"Error: settings.json not found at {settings_path}", file=sys.stderr)
         sys.exit(1)
