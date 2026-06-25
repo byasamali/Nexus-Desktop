@@ -572,15 +572,11 @@ export default function OrderCockpit() {
   const isInitialCartLoad = useRef(true);
   const [cartSyncStatus, setCartSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showOnlyOrders, setShowOnlyOrders] = useState(true);
-  const [selectedMainCats, setSelectedMainCats] = useState<number[]>([]);
-  const [selectedAltCats, setSelectedAltCats] = useState<number[]>([]);
-  const [excludedAltCats, setExcludedAltCats] = useState<number[]>([]);
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [selectedBarkods, setSelectedBarkods] = useState<Set<string>>(new Set());
   const [visibleGroupsCount, setVisibleGroupsCount] = useState(20);
   const [filterEsdegersiz, setFilterEsdegersiz] = useState<'active' | 'passive' | 'excluded'>('active');
-  const [selectedDaysLimit, setSelectedDaysLimit] = useState<number | null>(null);
+  const [selectedDaysLimit, setSelectedDaysLimit] = useState<number | null>(30);
 
   const getDaysUntilMonthEnd = () => {
     const now = new Date();
@@ -665,7 +661,6 @@ export default function OrderCockpit() {
       "bg-white border-stone-200 text-stone-400 hover:border-stone-300 hover:text-stone-600"
     );
   };
-  const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [cockpitSortField, setCockpitSortField] = useState<string | null>(null);
   const [cockpitSortOrder, setCockpitSortOrder] = useState<'asc' | 'desc'>('asc');
 
@@ -1152,19 +1147,6 @@ export default function OrderCockpit() {
 
           const matchSearch = q === "" || (urun.v2 || "").toLowerCase().includes(q) || (urun.v1 || "").toLowerCase().includes(q);
           if (q !== "" && !matchSearch) return false;
-          const itemCart = cart[urun.v1] || { qty: 0 };
-          if (showOnlyOrders && itemCart.qty === 0) return false;
-          if (selectedMainCats.length > 0) {
-            const kid = (urun.kategori_id || 0) as number;
-            if (!selectedMainCats.some(anaId => isInAnaKategori(kid, anaId))) return false;
-          }
-          if (selectedAltCats.length > 0) {
-            if (!selectedAltCats.includes((urun.kategori_id || 0) as number)) return false;
-          }
-          // Dışlanan alt kategoriler
-          if (excludedAltCats.length > 0) {
-            if (excludedAltCats.includes((urun.kategori_id || 0) as number)) return false;
-          }
           const uColor = (urun.v82 || "").toUpperCase();
           if (selectedColors.length > 0 && !selectedColors.includes(uColor)) return false;
 
@@ -1237,7 +1219,7 @@ export default function OrderCockpit() {
       });
   };
 
-  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, showOnlyOrders, filterEsdegersiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik, selectedDaysLimit, deadStockMap]);
+  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, filterEsdegersiz, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik, selectedDaysLimit, deadStockMap]);
 
   const filteredIlacGroups = useMemo(() => {
     return filteredGroups.filter(g => isDynamicPharmaceuticalCategory(g.kategori_id || 0));
@@ -1543,13 +1525,6 @@ export default function OrderCockpit() {
                         </button>
                       </div>
 
-                      {/* Arama (flex-1 sayesinde kalan alanı kaplar) */}
-                      <div className="relative flex-1 min-w-0 max-w-[200px] ml-auto">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-stone-400" />
-                        <input type="text" placeholder="Ürün ara..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                          className="w-full pl-7 pr-3 h-9 text-[11px] bg-stone-50 border border-stone-200 rounded-lg outline-none focus:bg-white transition-all" />
-                      </div>
-
                       {/* Sepet — mobilde sağ köşe */}
                       {cartSummary.items > 0 && (
                         <button onClick={() => setActiveTab('sepet')}
@@ -1563,28 +1538,12 @@ export default function OrderCockpit() {
 
                     {/* Satır 2: filtreler — mobilde scroll edilebilir yatay */}
                     <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-0.5 scrollbar-hide">
-                      <button onClick={() => setShowFilterPanel((v: boolean) => !v)}
-                        className={cn("h-8 px-2.5 text-[11px] font-semibold rounded-lg border transition-all flex items-center gap-1.5 shrink-0",
-                          (selectedMainCats.length > 0 || selectedAltCats.length > 0 || excludedAltCats.length > 0)
-                            ? "bg-stone-900 text-white border-stone-900"
-                            : "bg-white text-stone-600 border-stone-200 hover:border-stone-300")}>
-                        <Layers size={11} />
-                        <span className="whitespace-nowrap">Kategori</span>
-                        {(selectedMainCats.length > 0 || selectedAltCats.length > 0 || excludedAltCats.length > 0) && (
-                          <span className="bg-white/20 text-white text-[9px] px-1 rounded-full">
-                            {selectedMainCats.length + selectedAltCats.length + excludedAltCats.length}
-                          </span>
-                        )}
-                      </button>
-
-                      {/* Eşdeğersiz butonu kaldırıldı, üst satırdaki 7'li filtre grubuna eklendi */}
-
-                      <button onClick={() => setShowOnlyOrders(!showOnlyOrders)}
-                        className={cn("h-8 px-2.5 text-[11px] font-semibold rounded-lg border transition-all flex items-center gap-1.5 shrink-0",
-                          showOnlyOrders ? "bg-stone-900 text-white border-stone-900" : "bg-white text-stone-600 border-stone-200 hover:border-stone-300")}>
-                        {showOnlyOrders ? <Check size={10} /> : <EyeOff size={10} />}
-                        <span className="whitespace-nowrap">Sıfırları Gizle</span>
-                      </button>
+                      {/* Ürün Arama Kutusu */}
+                      <div className="relative w-64 shrink-0">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-stone-400 pointer-events-none" />
+                        <input type="text" placeholder="Ürün ara..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                          className="w-full pl-8 pr-3 h-8 text-[11px] bg-stone-50 border border-stone-200 rounded-lg outline-none focus:bg-white transition-all focus:border-stone-300 font-medium" />
+                      </div>
 
                       <div className="w-px h-5 bg-stone-200 shrink-0" />
 
@@ -1592,14 +1551,16 @@ export default function OrderCockpit() {
                       <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg border border-stone-200/60 shrink-0 h-8">
                         <span className="text-[9px] font-bold text-stone-500 px-2 select-none whitespace-nowrap">Stok Ömrü &lt;</span>
                         {[
-                          { label: 'Tümü', value: null },
+                          { label: 'Ay Sonu', value: 'month-end' },
                           { label: '2G', value: 2 },
                           { label: '7G', value: 7 },
                           { label: '15G', value: 15 },
                           { label: '30G', value: 30 },
-                          { label: 'Ay Sonu', value: 'month-end' },
+                          { label: '45G', value: 45 },
+                          { label: '60G', value: 60 },
+                          { label: '90G', value: 90 },
                         ].map(opt => {
-                          const limit = opt.value === 'month-end' ? getDaysUntilMonthEnd() : opt.value as number | null;
+                          const limit = opt.value === 'month-end' ? getDaysUntilMonthEnd() : opt.value as number;
                           const isActive = selectedDaysLimit === limit;
                           return (
                             <button
@@ -1640,15 +1601,7 @@ export default function OrderCockpit() {
                       )}
                     </div>
 
-                    {/* Kategori filtre paneli */}
-                    {showFilterPanel && (
-                      <div className="mt-3 pt-3 border-t border-stone-100">
-                        <KategoriFiltreBar
-                          selectedMainCats={selectedMainCats} setSelectedMainCats={setSelectedMainCats}
-                          selectedAltCats={selectedAltCats} setSelectedAltCats={setSelectedAltCats}
-                          excludedAltCats={excludedAltCats} setExcludedAltCats={setExcludedAltCats} />
-                      </div>
-                    )}
+
                   </div>
 
                   {/* İÇERİK — mobilde kart listesi, masaüstünde tablo */}
@@ -1674,19 +1627,15 @@ export default function OrderCockpit() {
                             <colgroup>
                               <col style={{ width: '45px' }} /> {/* Checkbox ve Çizgi Kolonu */}
                               <col /> {/* Ürün Bilgisi */}
-                              {/* <col style={{ width: '180px' }} /> */} {/* Tahmini Satış */}
-                              <col style={{ width: '56px' }} />
-                              {/* <col style={{ width: '56px' }} /> */}
-                              {/* <col style={{ width: '68px' }} /> */}
+                              <col style={{ width: '80px' }} /> {/* Hız/ay */}
+                              <col style={{ width: '160px' }} /> {/* Sipariş */}
                             </colgroup>
                             <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
                               <tr>
                                 <th className="py-4"></th>
                                 <th className="py-4 px-3 text-left font-semibold text-stone-400 text-[10px] uppercase tracking-widest">Ürün Bilgisi</th>
-                                {/* <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Tahmini Satış</th> */}
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Hız/ay</th>
-                                {/* <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Stok</th> */}
-                                {/* <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">İHT</th> */}
+                                <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Sipariş</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1875,26 +1824,21 @@ export default function OrderCockpit() {
                       {filterEsdegersiz === 'active' && <Check size={10} className="inline mr-1" />}
                       <span>Eşdeğersiz</span>
                     </button>
-                    <button onClick={() => setShowOnlyOrders(!showOnlyOrders)}
-                      className={cn("h-8 px-3 text-[11px] font-semibold rounded-lg border transition-all",
-                        showOnlyOrders
-                          ? "bg-stone-900 text-white border-stone-900"
-                          : "bg-white text-stone-500 border-stone-200 hover:border-stone-300 hover:text-stone-700")}>
-                      {showOnlyOrders && <Check size={10} className="inline mr-1" />}Sepettekiler
-                    </button>
 
                     {/* Stok Ömrü Filtresi */}
                     <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg border border-stone-200/60 shrink-0 h-8">
                       <span className="text-[9px] font-bold text-stone-500 px-2 select-none whitespace-nowrap">Stok Ömrü &lt;</span>
                       {[
-                        { label: 'Tümü', value: null },
+                        { label: 'Ay Sonu', value: 'month-end' },
                         { label: '2G', value: 2 },
                         { label: '7G', value: 7 },
                         { label: '15G', value: 15 },
                         { label: '30G', value: 30 },
-                        { label: 'Ay Sonu', value: 'month-end' },
+                        { label: '45G', value: 45 },
+                        { label: '60G', value: 60 },
+                        { label: '90G', value: 90 },
                       ].map(opt => {
-                        const limit = opt.value === 'month-end' ? getDaysUntilMonthEnd() : opt.value as number | null;
+                        const limit = opt.value === 'month-end' ? getDaysUntilMonthEnd() : opt.value as number;
                         const isActive = selectedDaysLimit === limit;
                         return (
                           <button
@@ -1972,12 +1916,7 @@ export default function OrderCockpit() {
                   </div>
                 </div>
 
-                {/* Alt satır: kategori filtresi */}
-                <div className="mt-2.5 pt-2.5 border-t border-stone-100">
-                  <KategoriFiltreBar selectedMainCats={selectedMainCats} setSelectedMainCats={setSelectedMainCats}
-                    selectedAltCats={selectedAltCats} setSelectedAltCats={setSelectedAltCats}
-                    excludedAltCats={excludedAltCats} setExcludedAltCats={setExcludedAltCats} />
-                </div>
+
               </div>
 
               {/* MODAL CONTENT — tablo */}
@@ -2762,6 +2701,16 @@ const TableProductRow = React.memo(function TableProductRow({
   const stk = urun.v4 || 0;
   const spd30 = spd * 30;
 
+  const rawBaremler = Array.isArray(urun.mf_baremleri) ? urun.mf_baremleri : [];
+  const seen = new Set<string>();
+  const baremler = rawBaremler.filter((b: any) => {
+    if (!b || b.mf === 0 || b.ana === 0) return false;
+    const key = `${b.ana}+${b.mf}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   const periodDays = () => {
     if (period === 'month') {
       const t = new Date(), last = new Date(t.getFullYear(), t.getMonth() + 1, 0);
@@ -2810,43 +2759,50 @@ const TableProductRow = React.memo(function TableProductRow({
 
       {/* Ürün Bilgisi */}
       <td className="px-3 py-4 align-middle">
-        <div className="flex items-center justify-between gap-4 w-full">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span
-                onClick={() => openAnalysis(urun)}
-                className="font-bold text-[13px] text-stone-900 truncate cursor-pointer hover:text-orange-600 transition-colors leading-snug">
-                {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 mt-1.5">
-              <button onClick={() => copyFn(urun.v1)}
-                className="font-mono text-[10px] text-stone-400 hover:text-teal-600 bg-stone-50 px-2 py-0.5 rounded border border-stone-200 transition-colors flex items-center gap-1">
-                {copiedId === urun.v1 ? <><Check size={8} /> Kopyalandı</> : <><Copy size={8} /> {urun.v1}</>}
-              </button>
-
-              <button onClick={() => onEditCategory && onEditCategory(urun)}
-                className="p-1 hover:text-blue-600 bg-white hover:bg-blue-50 text-stone-400 rounded border border-stone-200 hover:border-blue-200 transition-colors flex items-center justify-center shrink-0"
-                title="Kategoriyi Düzenle">
-                <Layers size={11} />
-              </button>
-
-              <button onClick={() => onAddToYokListesi && onAddToYokListesi(urun)}
-                className="p-1 hover:text-rose-600 bg-white hover:bg-rose-50 text-stone-400 rounded border border-stone-200 hover:border-rose-200 transition-colors flex items-center justify-center shrink-0"
-                title="Yok Listesine Ekle">
-                <ListX size={11} />
-              </button>
-
-              <button onClick={() => onEditProductDetails && onEditProductDetails(urun)}
-                className="p-1 hover:text-indigo-600 bg-white hover:bg-indigo-50 text-stone-400 rounded border border-stone-200 hover:border-indigo-200 transition-colors flex items-center justify-center shrink-0"
-                title="İlaç Bilgilerini Düzenle (master_db)">
-                <Settings size={11} />
-              </button>
-            </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span
+              onClick={() => openAnalysis(urun)}
+              className="font-bold text-[13px] text-stone-900 truncate cursor-pointer hover:text-orange-600 transition-colors leading-snug">
+              {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
+            </span>
           </div>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            <button onClick={() => copyFn(urun.v1)}
+              className="font-mono text-[10px] text-stone-400 hover:text-teal-600 bg-stone-50 px-2 py-0.5 rounded border border-stone-200 transition-colors flex items-center gap-1">
+              {copiedId === urun.v1 ? <><Check size={8} /> Kopyalandı</> : <><Copy size={8} /> {urun.v1}</>}
+            </button>
 
-          {/* Sağ Taraf: Adet Kutusu ve Sepet Butonu */}
-          <div className="flex items-center gap-1.5 shrink-0">
+            <button onClick={() => onEditCategory && onEditCategory(urun)}
+              className="p-1 hover:text-blue-600 bg-white hover:bg-blue-50 text-stone-400 rounded border border-stone-200 hover:border-blue-200 transition-colors flex items-center justify-center shrink-0"
+              title="Kategoriyi Düzenle">
+              <Layers size={11} />
+            </button>
+
+            <button onClick={() => onAddToYokListesi && onAddToYokListesi(urun)}
+              className="p-1 hover:text-rose-600 bg-white hover:bg-rose-50 text-stone-400 rounded border border-stone-200 hover:border-rose-200 transition-colors flex items-center justify-center shrink-0"
+              title="Yok Listesine Ekle">
+              <ListX size={11} />
+            </button>
+
+            <button onClick={() => onEditProductDetails && onEditProductDetails(urun)}
+              className="p-1 hover:text-indigo-600 bg-white hover:bg-indigo-50 text-stone-400 rounded border border-stone-200 hover:border-indigo-200 transition-colors flex items-center justify-center shrink-0"
+              title="İlaç Bilgilerini Düzenle (master_db)">
+              <Settings size={11} />
+            </button>
+          </div>
+        </div>
+      </td>
+
+      {/* Hız/ay */}
+      <td className="px-3 py-4 text-center align-middle hidden sm:table-cell">
+        <span className="text-[12px] font-mono font-bold text-stone-700">{spd30.toFixed(1)}</span>
+      </td>
+
+      {/* Sipariş (Adet, Sepet, MF baremleri) */}
+      <td className="px-3 py-4 text-center align-middle">
+        <div className="flex flex-col gap-1 items-center justify-center">
+          <div className="flex items-center gap-1.5 justify-center">
             <input
               type="number"
               value={customQty !== null ? customQty : (inCart ? itemCart.qty : (need > 0 ? need : 1))}
@@ -2857,7 +2813,7 @@ const TableProductRow = React.memo(function TableProductRow({
                   updateCart(urun.v1, val, undefined, urun);
                 }
               }}
-              className="w-12 h-8 text-center border border-stone-200 rounded-lg font-bold font-mono text-xs outline-none focus:border-teal-500 bg-white"
+              className="w-14 h-9 text-center border border-stone-200 rounded-lg font-bold font-mono text-sm outline-none focus:border-teal-500 bg-white"
               min="0"
             />
             <button 
@@ -2866,41 +2822,43 @@ const TableProductRow = React.memo(function TableProductRow({
                 updateCart(urun.v1, qtyVal, undefined, urun, true);
               }}
               className={cn(
-                "h-8 w-12 rounded-lg border transition-all flex items-center justify-center font-bold",
+                "h-9 w-14 rounded-lg border transition-all flex items-center justify-center font-bold",
                 inCart 
                   ? "bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700" 
                   : "bg-teal-600 border-teal-600 text-white hover:bg-teal-700 hover:scale-105 active:scale-95 shadow-sm"
               )}
               title={inCart ? `Sepette (${itemCart.qty} Adet)` : `Sepete Ekle`}
             >
-              {inCart ? <Check size={16} /> : <ShoppingCart size={14} />}
+              {inCart ? <Check size={18} /> : <ShoppingCart size={16} />}
             </button>
           </div>
+          {/* MF Baremleri */}
+          {baremler.length > 0 && (
+            <div className="flex flex-wrap gap-1 justify-center mt-1">
+              {baremler.map((b: any, bi: number) => {
+                const isCurrentMf = inCart && itemCart.qty === b.ana && itemCart.mf === b.mf;
+                return (
+                  <button
+                    key={bi}
+                    onClick={() => {
+                      setCustomQty(b.ana);
+                      updateCart(urun.v1, b.ana, b.mf, urun, true);
+                    }}
+                    className={cn(
+                      "text-[9px] font-bold font-mono px-1.5 py-0.5 rounded border transition-all active:scale-95",
+                      isCurrentMf
+                        ? "bg-teal-600 border-teal-600 text-white font-black"
+                        : "bg-teal-50 hover:bg-teal-100 text-teal-700 border-teal-200"
+                    )}
+                    title={`${b.ana} adet alıma ${b.mf} mf`}
+                  >
+                    {b.ana}+{b.mf}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </td>
-
-      {/* Tahmini Satış (Period Seçici) - YORUM SATIRI
-      <td className="px-2 py-4 align-middle hidden sm:table-cell">
-        <div className="flex items-center justify-center gap-0.5">
-          {PERIODS.map(p => {
-            const days = p.value === 'month' ? 30 : p.value as number;
-            const displayVal = Math.round(spd * days);
-            const isActive = p.value === period;
-            return (
-              <button key={p.label} onClick={() => setPeriod(p.value)}
-                className={cn("flex flex-col items-center px-1.5 py-1 rounded transition-all w-[38px]",
-                  isActive ? "bg-stone-900 text-white" : "hover:bg-stone-100 text-stone-500")}>
-                <span className="text-[7px] font-black uppercase leading-none mb-0.5">{p.label}</span>
-                <span className="text-[11px] font-bold font-mono leading-tight">{displayVal}</span>
-              </button>
-            );
-          })}
-        </div>
-      </td>
-      */}
-
-      <td className="px-3 py-4 text-center align-middle hidden sm:table-cell">
-        <span className="text-[12px] font-mono font-bold text-stone-700">{spd30.toFixed(1)}</span>
       </td>
 
       {/* Stok - YORUM SATIRI

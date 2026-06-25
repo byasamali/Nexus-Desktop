@@ -21,9 +21,25 @@ protocol.registerSchemesAsPrivileged([
 const execDir = app.isPackaged ? path.dirname(process.execPath) : __dirname;
 
 // Paths for settings and python
-const settingsPath = path.join(execDir, 'settings.json');
 const pythonDir = path.join(execDir, 'python');
+const settingsPath = path.join(pythonDir, 'tenants', 'settings.json');
 const pythonVenvPython = path.join(pythonDir, '.venv', 'Scripts', 'python.exe');
+
+// Migrate settings from old location to new location if exists
+const oldSettingsPath = path.join(execDir, 'settings.json');
+if (fs.existsSync(oldSettingsPath) && !fs.existsSync(settingsPath)) {
+  try {
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.copyFileSync(oldSettingsPath, settingsPath);
+    fs.unlinkSync(oldSettingsPath);
+    console.log('Migrated settings.json to python/tenants/settings.json');
+  } catch (err) {
+    console.error('Failed to migrate settings:', err);
+  }
+}
 
 let mainWindow;
 
@@ -99,6 +115,10 @@ ipcMain.handle('wails:LoadSettings', async () => {
 
 ipcMain.handle('wails:SaveSettings', async (event, settingsJSON) => {
   try {
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(settingsPath, settingsJSON, 'utf8');
     return 'Settings saved successfully';
   } catch (err) {
