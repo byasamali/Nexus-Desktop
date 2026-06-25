@@ -25,6 +25,7 @@ window.go = {
       SaveLocalJSON: (gln, filename, content) => ipcRenderer.invoke('wails:SaveLocalJSON', gln, filename, content),
       TriggerSyncAndAnalysis: (gln, fullSync) => ipcRenderer.invoke('wails:TriggerSyncAndAnalysis', gln, fullSync),
       RunCategoryAction: (action, paramsJSON) => ipcRenderer.invoke('wails:RunCategoryAction', action, paramsJSON),
+      RunDbQuery: (query, paramsJSON) => ipcRenderer.invoke('wails:RunDbQuery', query, paramsJSON),
       StartDepoProxy: (targetRaw) => Promise.resolve(targetRaw), // In Electron, <webview> handles original URL directly!
       StopDepoProxy: (proxyURL) => Promise.resolve(),
       OpenURLInBrowser: (targetURL) => ipcRenderer.invoke('wails:OpenURLInBrowser', targetURL),

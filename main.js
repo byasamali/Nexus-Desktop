@@ -285,6 +285,38 @@ ipcMain.handle('wails:TriggerSyncAndAnalysis', async (event, gln, fullSync) => {
   });
 });
 
+ipcMain.handle('wails:RunDbQuery', async (event, query, paramsJSON) => {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(pythonDir, 'db_tool.py');
+    let pythonProcess;
+    if (fs.existsSync(pythonVenvPython)) {
+      pythonProcess = spawn(pythonVenvPython, [scriptPath, 'execute', query, paramsJSON || '[]']);
+    } else {
+      pythonProcess = spawn('python', [scriptPath, 'execute', query, paramsJSON || '[]']);
+    }
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString('utf8');
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString('utf8');
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`db_tool.py failed with code ${code}. Stderr: ${stderrData}`);
+        reject(new Error(stderrData || `Exit code ${code}`));
+        return;
+      }
+      resolve(stdoutData.trim());
+    });
+  });
+});
+
 app.whenReady().then(() => {
   registerAppProtocol();
   createWindow();

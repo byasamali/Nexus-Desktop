@@ -20,6 +20,7 @@ import Depolar from '@/components/Depolar';
 import CategoryManager from '@/components/CategoryManager';
 import IadelerPage from '@/components/Iadeler';
 import ProductDbModal from '@/components/ProductDbModal';
+import DatabaseManager from '@/components/DatabaseManager';
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { fetchEczaneData } from '@/lib/api';
@@ -29,7 +30,7 @@ import {
   Copy, ShoppingCart, BarChart2, Check, ChevronDown, Calendar, Brain,
   DollarSign, ClipboardList, X, TrendingUp, RefreshCw, MoreVertical, EyeOff, Zap, Download, Layers, Sparkles, ChevronRight, Info,
   ListX, RotateCcw, PackageX, Star, ArrowRight, Pill, FlaskConical, Trash2,
-  Building2, Users, Wrench, Settings, Menu, Truck
+  Building2, Users, Wrench, Settings, Menu, Truck, Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from "clsx";
@@ -1408,6 +1409,7 @@ export default function OrderCockpit() {
           {/* ARAÇLAR */}
           <NavSection label="Araçlar" open={menuStates.araclar} onToggle={() => toggleMenu('araclar')}>
             <SideNavItem id="kategori_yonetimi" icon={Layers} label="Kategori Yönetimi" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="teal" />
+            <SideNavItem id="veritabani_araci" icon={Database} label="Veritabanı Aracı" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="orange" />
           </NavSection>
 
         </nav>
@@ -1762,6 +1764,7 @@ export default function OrderCockpit() {
                 {activeTab === 'st' && <OutOfStockReport data={data?.stok_sifir_listesi || []} />}
                 {activeTab === 'ayarlar' && <AyarlarPage supabase={supabase} />}
                 {activeTab === 'kategori_yonetimi' && <CategoryManager />}
+                {activeTab === 'veritabani_araci' && <DatabaseManager />}
                 {activeTab === 'iadeler' && <IadelerPage gln={data?.gln || 'local'} />}
                 {/* {activeTab === 'kardes' && <KardesEczanePage />} */}
                 {['nb', 'para'].includes(activeTab) && (
