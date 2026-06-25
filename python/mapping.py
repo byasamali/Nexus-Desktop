@@ -7,6 +7,7 @@ VAR_MAP = {
     "fiyat": "v3",
     "stok": "v4",
     "hibrit_hiz": "v20",
+    "gun_farki_son_satis": "v21",
     "oneri": "v25",
     "oneri_stratejik": "v26",
     "is_lider": "v30",

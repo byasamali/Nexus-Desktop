@@ -7,6 +7,7 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env
 
 import GeneralReports from '@/components/GeneralReports';
 import YokListesi from '@/components/YokListesi';
+import GozdenKacanlar from '@/components/GozdenKacanlar';
 import SepetPage from '@/components/Sepet';
 import PredictionsReport from '@/components/PredictionsReport';
 import TaskBoard from '@/components/TaskBoard';
@@ -1057,7 +1058,7 @@ export default function OrderCockpit() {
           // Son 3 ayda hareket görmemiş (>= 90 gün) ve aylık hızı < 1 olanları gizle
           const dailySpd = urun.v20 || 0;
           const monthlySpd = dailySpd * 30;
-          const daysInactive = deadStockMap[urun.v1] || 0;
+          const daysInactive = urun.v21 || 0;
           if (daysInactive >= 90 && monthlySpd < 1) return false;
 
           const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
@@ -1316,6 +1317,7 @@ export default function OrderCockpit() {
             <SideNavItem id="depolar" icon={Truck} label="Depolar" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="blue" />
             <NavDivider label="Takip" />
             <SideNavItem id="yok_listesi" icon={ListX} label="Yok Listem" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="red" />
+            <SideNavItem id="gozden_kacanlar" icon={EyeOff} label="Gözden Kaçanlar" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="amber" />
             <SideNavItem id="iadeler" icon={RotateCcw} label="İadeler" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="emerald" />
             {/* <SideNavItemDisabled icon={Star} label="PSF'si Hatalı" /> */}
             <SideNavItem id="mr" icon={AlertTriangle} label="Miad Riski" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="amber" />
@@ -1675,6 +1677,16 @@ export default function OrderCockpit() {
                 {activeTab === 'tahmin' && <PredictionsReport data={data} />}
                 {activeTab === 'yok_listesi' && (
                   <YokListesi 
+                    data={data} 
+                    gln={data?.gln || 'local'} 
+                    cart={cart}
+                    updateCart={updateCart}
+                    toggleCartItem={toggleCartItem}
+                    setCart={setCart}
+                  />
+                )}
+                {activeTab === 'gozden_kacanlar' && (
+                  <GozdenKacanlar 
                     data={data} 
                     gln={data?.gln || 'local'} 
                     cart={cart}
