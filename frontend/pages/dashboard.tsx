@@ -1036,6 +1036,16 @@ export default function OrderCockpit() {
     });
   };
 
+  const deadStockMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    if (data?.olu_stok_listesi) {
+      data.olu_stok_listesi.forEach((item: any) => {
+        map[item.barkod] = item.son_satis || 0;
+      });
+    }
+    return map;
+  }, [data]);
+
   const getFilteredGroups = () => {
     if (!data?.gruplar) return [];
     const q = searchQuery.toLowerCase();
@@ -1043,6 +1053,12 @@ export default function OrderCockpit() {
       .map((g: any) => {
         const filteredDetaylar = g.detaylar.filter((urun: any) => {
           if (ignoredBarkods.has(urun.v1)) return false;
+
+          // Son 3 ayda hareket görmemiş (>= 90 gün) ve aylık hızı < 1 olanları gizle
+          const dailySpd = urun.v20 || 0;
+          const monthlySpd = dailySpd * 30;
+          const daysInactive = deadStockMap[urun.v1] || 0;
+          if (daysInactive >= 90 && monthlySpd < 1) return false;
 
           const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
           const isCrit = (g.tags || "").includes('ks') || (g.kritik_puan || 0) > 10;
@@ -1162,7 +1178,7 @@ export default function OrderCockpit() {
       });
   };
 
-  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, showOnlyOrders, filterEsdegersiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik, selectedDaysLimit]);
+  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, showOnlyOrders, filterEsdegersiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik, selectedDaysLimit, deadStockMap]);
 
   const filteredIlacGroups = useMemo(() => {
     return filteredGroups.filter(g => isDynamicPharmaceuticalCategory(g.kategori_id || 0));
@@ -1657,7 +1673,16 @@ export default function OrderCockpit() {
               <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="max-w-7xl mx-auto">
                 {activeTab === 'rapor' && <GeneralReports data={data} />}
                 {activeTab === 'tahmin' && <PredictionsReport data={data} />}
-                {activeTab === 'yok_listesi' && <YokListesi data={data} gln={data?.gln || 'local'} />}
+                {activeTab === 'yok_listesi' && (
+                  <YokListesi 
+                    data={data} 
+                    gln={data?.gln || 'local'} 
+                    cart={cart}
+                    updateCart={updateCart}
+                    toggleCartItem={toggleCartItem}
+                    setCart={setCart}
+                  />
+                )}
                 {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} />}
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}

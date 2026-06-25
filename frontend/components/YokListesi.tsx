@@ -3,9 +3,15 @@
 import React, { useState, useEffect } from 'react';
 import { 
     ListX, Search, Plus, Trash2, Calendar, 
-    ShoppingCart, AlertCircle, Sparkles, Building2, Package
+    ShoppingCart, AlertCircle, Sparkles, Building2, Package, Check
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+function cn(...inputs: ClassValue[]) {
+    return twMerge(clsx(inputs));
+}
 
 interface OutOfStockItem {
     barcode: string;
@@ -15,11 +21,13 @@ interface OutOfStockItem {
     notes?: string;
 }
 
-export default function YokListesi({ data, gln }: { data: any; gln: string }) {
+export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCartItem, setCart }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any }) {
     const [items, setItems] = useState<OutOfStockItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [activeSubTab, setActiveSubTab] = useState<'yok_listem' | 'gozden_kacabilenler'>('yok_listem');
+    const [quantities, setQuantities] = useState<Record<string, number>>({});
 
     const downloadXlsx = () => {
         if (items.length === 0) return;
@@ -128,6 +136,43 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
         }
         return result;
     }, [items, sortField, sortOrder]);
+
+    const deadStockMap = React.useMemo(() => {
+        const map: Record<string, number> = {};
+        if (data?.olu_stok_listesi) {
+            data.olu_stok_listesi.forEach((item: any) => {
+                map[item.barkod] = item.son_satis || 0;
+            });
+        }
+        return map;
+    }, [data]);
+
+    const gozdenKacabilenler = React.useMemo(() => {
+        const list: any[] = [];
+        if (!data?.gruplar) return list;
+        
+        data.gruplar.forEach((g: any) => {
+            (g.detaylar || []).forEach((u: any) => {
+                const stock = u.v4 || 0;
+                const dailySpeed = u.v20 || 0;
+                const monthlySpeed = dailySpeed * 30;
+                const daysInactive = deadStockMap[u.v1] || 0;
+                
+                // Kriterler: Stok <= 0 VE Hareketsizlik >= 90 gün (3 ay) VE Aylık Hız < 1
+                if (stock <= 0 && daysInactive >= 90 && monthlySpeed < 1) {
+                    list.push({
+                        barcode: u.v1,
+                        name: u.v2,
+                        depo: u.v91 || 'DEPO_YOK',
+                        daysInactive,
+                        monthlySpeed,
+                        rawUrun: u
+                    });
+                }
+            });
+        });
+        return list;
+    }, [data, deadStockMap]);
 
     const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
 
@@ -279,98 +324,215 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* SOL: EKLEME PANELİ */}
-                <div className="space-y-6 lg:col-span-1">
-                    {/* ARAMA İLE İLAÇ EKLE */}
-                    <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm space-y-4">
-                        <h3 className="font-black text-slate-800 text-lg leading-tight flex items-center gap-2">
-                            <Search size={18} className="text-red-500" />
-                            İlaç Arama
-                        </h3>
-                        <p className="text-xs text-slate-400 font-medium">Eczane envanterinden hızlıca arayarak ekleyin.</p>
-                        
-                        <div className="relative">
-                            <input 
-                                type="text"
-                                placeholder="Barkod veya ilaç adı girin..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:bg-white transition-all"
-                            />
-                            <Search className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
-                        </div>
+            {/* SUB-TABS */}
+            <div className="flex border-b border-slate-100 bg-white rounded-t-3xl px-6 pt-2 shrink-0">
+                <button
+                    onClick={() => setActiveSubTab('yok_listem')}
+                    className={cn(
+                        "px-6 py-4 font-bold text-sm border-b-3 transition-all flex items-center gap-2",
+                        activeSubTab === 'yok_listem'
+                            ? "border-red-500 text-red-600"
+                            : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                >
+                    <ListX size={16} />
+                    Manuel Ekleme / Yok Listem ({items.length})
+                </button>
+                <button
+                    onClick={() => setActiveSubTab('gozden_kacabilenler')}
+                    className={cn(
+                        "px-6 py-4 font-bold text-sm border-b-3 transition-all flex items-center gap-2",
+                        activeSubTab === 'gozden_kacabilenler'
+                            ? "border-red-500 text-red-600"
+                            : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                >
+                    <Sparkles size={16} />
+                    Gözden Kaçabilenler ({gozdenKacabilenler.length})
+                </button>
+            </div>
 
-                        {searchResults.length > 0 && (
-                            <div className="border border-slate-100 rounded-2xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-slate-50 bg-white shadow-lg">
-                                {searchResults.map((r, i) => (
-                                    <button 
-                                        key={i}
-                                        onClick={() => addItem(r)}
-                                        className="w-full flex items-center justify-between p-3 hover:bg-slate-50 text-left transition-colors"
-                                    >
-                                        <div className="min-w-0 pr-3">
-                                            <p className="text-xs font-bold text-slate-800 truncate">{r.name}</p>
-                                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">{r.barcode} · {r.depo}</p>
-                                        </div>
-                                        <div className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors">
-                                            <Plus size={14} />
-                                        </div>
-                                    </button>
-                                ))}
+            {activeSubTab === 'yok_listem' ? (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+                    {/* SOL: EKLEME PANELİ */}
+                    <div className="space-y-6 lg:col-span-1">
+                        {/* ARAMA İLE İLAÇ EKLE */}
+                        <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm space-y-4">
+                            <h3 className="font-black text-slate-800 text-lg leading-tight flex items-center gap-2">
+                                <Search size={18} className="text-red-500" />
+                                İlaç Arama
+                            </h3>
+                            <p className="text-xs text-slate-400 font-medium">Eczane envanterinden hızlıca arayarak ekleyin.</p>
+                            
+                            <div className="relative">
+                                <input 
+                                    type="text"
+                                    placeholder="Barkod veya ilaç adı girin..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:bg-white transition-all"
+                                />
+                                <Search className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
                             </div>
-                        )}
-                        {searchQuery.trim() && searchResults.length === 0 && (
-                            <p className="text-xs text-slate-400 text-center py-2 font-medium">Sonuç bulunamadı.</p>
-                        )}
+
+                            {searchResults.length > 0 && (
+                                <div className="border border-slate-100 rounded-2xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-slate-50 bg-white shadow-lg">
+                                    {searchResults.map((r, i) => (
+                                        <button 
+                                            key={i}
+                                            onClick={() => addItem(r)}
+                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-50 text-left transition-colors"
+                                        >
+                                            <div className="min-w-0 pr-3">
+                                                <p className="text-xs font-bold text-slate-800 truncate">{r.name}</p>
+                                                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{r.barcode} · {r.depo}</p>
+                                            </div>
+                                            <div className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors">
+                                                <Plus size={14} />
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            {searchQuery.trim() && searchResults.length === 0 && (
+                                <p className="text-xs text-slate-400 text-center py-2 font-medium">Sonuç bulunamadı.</p>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* SAĞ: LİSTE TABLOSU */}
+                    <div className="lg:col-span-2">
+                        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[500px]">
+                            <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
+                                <h3 className="font-black text-slate-800 text-lg tracking-tight">Yok Listesindeki İlaçlar</h3>
+                                <span className="text-xs font-bold text-slate-400">{items.length} Kalem Listeleniyor</span>
+                            </div>
+
+                            {items.length > 0 ? (
+                                <div className="overflow-x-auto flex-1">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="border-b border-slate-100 bg-slate-50/50">
+                                                <th onClick={() => handleSort('name')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
+                                                    İlaç Adı {sortField === 'name' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                                </th>
+                                                <th onClick={() => handleSort('barcode')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
+                                                    Barkod {sortField === 'barcode' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                                </th>
+                                                <th onClick={() => handleSort('depo')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
+                                                    En Son Depo {sortField === 'depo' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                                </th>
+                                                <th onClick={() => handleSort('addedAt')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
+                                                    Ekleme Zamanı {sortField === 'addedAt' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                                </th>
+                                                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right select-none">İşlem</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {sortedItems.map((item, idx) => (
+                                                <tr key={item.barcode} className="hover:bg-slate-50/50 transition-colors group">
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="p-2 bg-red-50 text-red-500 rounded-xl">
+                                                                <Package size={16} />
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="text-xs font-bold text-slate-800 truncate">{item.name}</p>
+                                                                {item.notes && (
+                                                                    <p className="text-[10px] text-red-500 font-medium mt-0.5 flex items-center gap-1">
+                                                                        <AlertCircle size={10} />
+                                                                        {item.notes}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-xs font-mono text-slate-500">{item.barcode}</td>
+                                                    <td className="px-6 py-4 text-xs font-bold text-slate-600">
+                                                        <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-lg border border-slate-200">
+                                                            <Building2 size={12} className="text-slate-400" />
+                                                            {item.depo}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-xs text-slate-500">
+                                                        <span className="flex items-center gap-1.5">
+                                                            <Calendar size={12} className="text-slate-400" />
+                                                            {new Date(item.addedAt).toLocaleDateString('tr-TR', {
+                                                                day: 'numeric',
+                                                                month: 'short',
+                                                                hour: '2-digit',
+                                                                minute: '2-digit'
+                                                            })}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <button 
+                                                            onClick={() => removeItem(item.barcode)}
+                                                            className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:bg-red-50 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 border border-slate-100 hover:border-red-100 shadow-sm"
+                                                            title="Listeden Kaldır"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                                    <div className="h-16 w-16 bg-slate-50 text-slate-300 rounded-3xl flex items-center justify-center mb-4 border border-slate-100">
+                                        <ListX size={28} />
+                                    </div>
+                                    <h4 className="text-base font-black text-slate-800">Yok Listeniz Boş</h4>
+                                    <p className="text-xs text-slate-400 font-medium max-w-sm mt-1">
+                                        Harika! Şu an için eksik ilacınız bulunmuyor. Eklemek için yandaki arama veya manuel paneli kullanabilirsiniz.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
-
-                {/* SAĞ: LİSTE TABLOSU */}
-                <div className="lg:col-span-2">
-                    <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[500px]">
-                        <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
-                            <h3 className="font-black text-slate-800 text-lg tracking-tight">Yok Listesindeki İlaçlar</h3>
-                            <span className="text-xs font-bold text-slate-400">{items.length} Kalem Listeleniyor</span>
+            ) : (
+                /* GÖZDEN KAÇABİLENLER PANELİ */
+                <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col min-h-[500px] animate-fadeIn">
+                    <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
+                        <div>
+                            <h3 className="font-black text-slate-800 text-lg tracking-tight">Gözden Kaçabilen İlaçlar</h3>
+                            <p className="text-xs text-slate-500 font-medium mt-0.5">Son 3 aydır (90 gün) hareketsiz olan ve aylık satış hızı 1'den küçük olan sıfır stoklu ürünler.</p>
                         </div>
+                        <span className="text-xs font-bold text-slate-400">{gozdenKacabilenler.length} Kalem Listeleniyor</span>
+                    </div>
 
-                        {items.length > 0 ? (
-                            <div className="overflow-x-auto flex-1">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="border-b border-slate-100 bg-slate-50/50">
-                                            <th onClick={() => handleSort('name')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                İlaç Adı {sortField === 'name' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th onClick={() => handleSort('barcode')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                Barkod {sortField === 'barcode' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th onClick={() => handleSort('depo')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                En Son Depo {sortField === 'depo' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th onClick={() => handleSort('addedAt')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                Ekleme Zamanı {sortField === 'addedAt' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right select-none">İşlem</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50">
-                                        {sortedItems.map((item, idx) => (
+                    {gozdenKacabilenler.length > 0 ? (
+                        <div className="overflow-x-auto flex-1">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="border-b border-slate-100 bg-slate-50/50">
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none">İlaç Adı</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none">Barkod</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none">En Son Depo</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none">Hareketsizlik</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none">Aylık Hız</th>
+                                        <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-[200px]">Sipariş</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {gozdenKacabilenler.map((item) => {
+                                        const u = item.rawUrun;
+                                        const qtyVal = quantities[u.v1] !== undefined
+                                            ? quantities[u.v1]
+                                            : (cart[u.v1]?.qty || Math.round(u.v26 || 0) + Math.round(u.v27 || 0) || 1);
+                                        const inCart = cart[u.v1]?.inCart || false;
+
+                                        return (
                                             <tr key={item.barcode} className="hover:bg-slate-50/50 transition-colors group">
                                                 <td className="px-6 py-4">
                                                     <div className="flex items-center gap-3">
-                                                        <div className="p-2 bg-red-50 text-red-500 rounded-xl">
+                                                        <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
                                                             <Package size={16} />
                                                         </div>
-                                                        <div className="min-w-0">
-                                                            <p className="text-xs font-bold text-slate-800 truncate">{item.name}</p>
-                                                            {item.notes && (
-                                                                <p className="text-[10px] text-red-500 font-medium mt-0.5 flex items-center gap-1">
-                                                                    <AlertCircle size={10} />
-                                                                    {item.notes}
-                                                                </p>
-                                                            )}
-                                                        </div>
+                                                        <p className="text-xs font-bold text-slate-800 truncate max-w-[280px]" title={item.name}>{item.name}</p>
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4 text-xs font-mono text-slate-500">{item.barcode}</td>
@@ -380,45 +542,85 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
                                                         {item.depo}
                                                     </span>
                                                 </td>
-                                                <td className="px-6 py-4 text-xs text-slate-500">
-                                                    <span className="flex items-center gap-1.5">
-                                                        <Calendar size={12} className="text-slate-400" />
-                                                        {new Date(item.addedAt).toLocaleDateString('tr-TR', {
-                                                            day: 'numeric',
-                                                            month: 'short',
-                                                            hour: '2-digit',
-                                                            minute: '2-digit'
-                                                        })}
+                                                <td className="px-6 py-4 text-xs text-center font-bold text-slate-600">
+                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 text-red-600 rounded-full border border-red-100">
+                                                        <Calendar size={12} />
+                                                        {item.daysInactive} Gün
                                                     </span>
                                                 </td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <button 
-                                                        onClick={() => removeItem(item.barcode)}
-                                                        className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:bg-red-50 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 border border-slate-100 hover:border-red-100 shadow-sm"
-                                                        title="Listeden Kaldır"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
+                                                <td className="px-6 py-4 text-xs text-center font-mono font-bold text-slate-500">
+                                                    {item.monthlySpeed.toFixed(2)}/ay
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    <div className="flex items-center justify-center gap-1.5">
+                                                        <input
+                                                            type="number"
+                                                            value={qtyVal}
+                                                            onChange={e => setQuantities(prev => ({ ...prev, [u.v1]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                                            className="w-12 h-8 text-center border border-slate-200 rounded-lg font-bold font-mono text-xs outline-none focus:border-red-500 bg-white"
+                                                            min="0"
+                                                        />
+                                                        <button
+                                                            onClick={() => {
+                                                                if (updateCart && toggleCartItem) {
+                                                                    updateCart(u.v1, qtyVal, undefined, u);
+                                                                    if (!inCart) {
+                                                                        toggleCartItem(u.v1, u);
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className={cn(
+                                                                "h-8 px-2 text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 shrink-0",
+                                                                inCart
+                                                                    ? "bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100"
+                                                                    : "bg-red-500 text-white hover:bg-red-600"
+                                                            )}
+                                                        >
+                                                            {inCart ? <Check size={10} /> : <ShoppingCart size={10} />}
+                                                            {inCart ? "Güncelle" : "Sepete Ekle"}
+                                                        </button>
+                                                        {inCart && (
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (setCart) {
+                                                                        setCart((prev: any) => ({
+                                                                            ...prev,
+                                                                            [u.v1]: {
+                                                                                ...prev[u.v1],
+                                                                                qty: 0,
+                                                                                mf: 0,
+                                                                                inCart: false
+                                                                            }
+                                                                        }));
+                                                                    }
+                                                                }}
+                                                                className="h-8 w-8 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg transition-all flex items-center justify-center shrink-0"
+                                                                title="Sepetten Çıkar"
+                                                            >
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                            <div className="h-16 w-16 bg-slate-50 text-slate-300 rounded-3xl flex items-center justify-center mb-4 border border-slate-100">
+                                <Sparkles size={28} />
                             </div>
-                        ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                                <div className="h-16 w-16 bg-slate-50 text-slate-300 rounded-3xl flex items-center justify-center mb-4 border border-slate-100">
-                                    <ListX size={28} />
-                                </div>
-                                <h4 className="text-base font-black text-slate-800">Yok Listeniz Boş</h4>
-                                <p className="text-xs text-slate-400 font-medium max-w-sm mt-1">
-                                    Harika! Şu an için eksik ilacınız bulunmuyor. Eklemek için yandaki arama veya manuel paneli kullanabilirsiniz.
-                                </p>
-                            </div>
-                        )}
-                    </div>
+                            <h4 className="text-base font-black text-slate-800">Gözden Kaçabilen İlaç Yok</h4>
+                            <p className="text-xs text-slate-400 font-medium max-w-sm mt-1">
+                                Harika! Son 3 aydır hareketsiz olan ve aylık hızı 1'den küçük olan sıfır stoklu bir ilaç bulunmuyor.
+                            </p>
+                        </div>
+                    )}
                 </div>
-            </div>
+            )}
         </div>
     );
 }
