@@ -34,9 +34,64 @@ interface SepetPageProps {
     syncStatus: 'idle' | 'saving' | 'saved' | 'error';
     persistItems: (newItems: CartItem[]) => void;
     setActiveTab: (tab: string) => void;
+    gln: string;
+    localOrders: any[];
 }
 
-export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab }: SepetPageProps) {
+const getCombinedMfHistory = (barcode: string, alimStr: string, localOrders: any[]) => {
+  const history: Array<{ date: string; mf: string; source: string; qty: number }> = [];
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+  // 1. Parse warehouse purchase history (v95)
+  if (alimStr && alimStr !== 'AL_YOK' && alimStr !== 'ALIM_YOK' && alimStr !== 'YOK') {
+    alimStr.split('|').forEach(entry => {
+      const parts = entry.split(':');
+      if (parts.length >= 2) {
+        const dateStr = parts[0];
+        const val = parts[1];
+        if (val.includes('+')) {
+          const entryDate = new Date(dateStr);
+          if (entryDate >= sixMonthsAgo) {
+            history.push({
+              date: dateStr,
+              mf: val,
+              source: 'Depo Alımı',
+              qty: parseInt(val.split('+')[0]) || 0
+            });
+          }
+        }
+      }
+    });
+  }
+
+  // 2. Local order history
+  if (Array.isArray(localOrders)) {
+    localOrders.forEach(order => {
+      if (order.barkod === barcode && order.durum === 'success') {
+        const entryDate = new Date(order.tarih);
+        if (entryDate >= sixMonthsAgo) {
+          const mfs = [order.mf1, order.mf2, order.mf3].filter(Boolean).join(', ');
+          if (mfs) {
+            const dateStr = entryDate.toISOString().split('T')[0];
+            history.push({
+              date: dateStr,
+              mf: mfs,
+              source: 'AS Ecza (Sipariş)',
+              qty: order.miktar || 0
+            });
+          }
+        }
+      }
+    });
+  }
+
+  // Sort by date descending
+  return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+};
+
+export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders }: SepetPageProps) {
+    const [expandedBarkod, setExpandedBarkod] = useState<string | null>(null);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
     const [editingCell, setEditingCell] = useState<{ barkod: string; field: string } | null>(null);
     const [eczaneId, setEczaneId] = useState<string | null>(null);
@@ -56,7 +111,8 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
             ad: val.ad || 'Bilinmeyen Ürün',
             depo: val.depo || 'Depo Belirsiz',
             qty: val.qty,
-            mf: val.mf || 0
+            mf: val.mf || 0,
+            v95: val.v95 || ''
         }));
 
     // --- YÜKLEME: Supabase'den sadece eczaneId (User ID) çek (Import için gerekebilir) ---
@@ -381,53 +437,108 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredItems.map((item) => (
-                                        <tr key={item.barkod} className="border-b border-stone-100 hover:bg-stone-50/50 transition-colors group">
-                                            <td className="px-2 md:px-4 py-2 md:py-3">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedItems.has(item.barkod)}
-                                                    onChange={() => toggleSelect(item.barkod)}
-                                                    className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-2 focus:ring-teal-100 cursor-pointer"
-                                                />
-                                            </td>
-                                            <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900">{item.ad}</td>
-                                            <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-mono text-stone-600">{item.barkod}</td>
-                                            <td className="px-2 md:px-4 py-2 md:py-3 text-center text-xs md:text-sm text-stone-600">{item.depo}</td>
-                                            <td className="px-2 md:px-4 py-2 md:py-3 text-center">
-                                                <input
-                                                    type="number"
-                                                    value={item.qty}
-                                                    onChange={(e) => {
-                                                        const updated = items.map(i => i.barkod === item.barkod ? { ...i, qty: Math.max(0, parseInt(e.target.value) || 0) } : i);
-                                                        persistItems(updated);
-                                                    }}
-                                                    className="w-12 md:w-16 text-center border border-stone-200 rounded px-1.5 md:px-2 py-1 md:py-1.5 font-semibold text-xs md:text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-                                                    min="0"
-                                                />
-                                            </td>
-                                            <td className="px-2 md:px-4 py-2 md:py-3 text-center">
-                                                <input
-                                                    type="number"
-                                                    value={item.mf}
-                                                    onChange={(e) => {
-                                                        const updated = items.map(i => i.barkod === item.barkod ? { ...i, mf: Math.max(0, parseInt(e.target.value) || 0) } : i);
-                                                        persistItems(updated);
-                                                    }}
-                                                    className="w-12 md:w-16 text-center border border-stone-200 rounded px-1.5 md:px-2 py-1 md:py-1.5 font-semibold text-xs md:text-sm text-teal-600 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-                                                    min="0"
-                                                />
-                                            </td>
-                                            <td className="px-2 md:px-4 py-2 md:py-3 text-right">
-                                                <button
-                                                    onClick={() => deleteItem(item.barkod)}
-                                                    className="opacity-0 group-hover:opacity-100 text-red-600 hover:text-red-700 transition-all"
+                                    {filteredItems.flatMap((item) => {
+                                        const isExpanded = expandedBarkod === item.barkod;
+                                        const mfHistory = getCombinedMfHistory(item.barkod, item.v95, localOrders);
+                                        return [
+                                            <tr key={item.barkod} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors group ${isExpanded ? 'bg-stone-50' : ''}`}>
+                                                <td className="px-2 md:px-4 py-2 md:py-3">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedItems.has(item.barkod)}
+                                                        onChange={() => toggleSelect(item.barkod)}
+                                                        className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-2 focus:ring-teal-100 cursor-pointer"
+                                                    />
+                                                </td>
+                                                <td 
+                                                    onClick={() => setExpandedBarkod(isExpanded ? null : item.barkod)}
+                                                    className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900 cursor-pointer hover:text-teal-600 select-none"
                                                 >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                    <div className="flex items-center gap-2">
+                                                        <span>{item.ad}</span>
+                                                        <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
+                                                            MF ({mfHistory.length})
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-mono text-stone-600">{item.barkod}</td>
+                                                <td className="px-2 md:px-4 py-2 md:py-3 text-center text-xs md:text-sm text-stone-600">{item.depo}</td>
+                                                <td className="px-2 md:px-4 py-2 md:py-3 text-center">
+                                                    <input
+                                                        type="number"
+                                                        value={item.qty}
+                                                        onChange={(e) => {
+                                                            const updated = items.map(i => i.barkod === item.barkod ? { ...i, qty: Math.max(0, parseInt(e.target.value) || 0) } : i);
+                                                            persistItems(updated);
+                                                        }}
+                                                        className="w-12 md:w-16 text-center border border-stone-200 rounded px-1.5 md:px-2 py-1 md:py-1.5 font-semibold text-xs md:text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                                                        min="0"
+                                                    />
+                                                </td>
+                                                <td className="px-2 md:px-4 py-2 md:py-3 text-center">
+                                                    <input
+                                                        type="number"
+                                                        value={item.mf}
+                                                        onChange={(e) => {
+                                                            const updated = items.map(i => i.barkod === item.barkod ? { ...i, mf: Math.max(0, parseInt(e.target.value) || 0) } : i);
+                                                            persistItems(updated);
+                                                        }}
+                                                        className="w-12 md:w-16 text-center border border-stone-200 rounded px-1.5 md:px-2 py-1 md:py-1.5 font-semibold text-xs md:text-sm text-teal-600 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                                                        min="0"
+                                                    />
+                                                </td>
+                                                <td className="px-2 md:px-4 py-2 md:py-3 text-right">
+                                                    <button
+                                                        onClick={() => deleteItem(item.barkod)}
+                                                        className="opacity-0 group-hover:opacity-100 text-red-600 hover:text-red-700 transition-all"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </td>
+                                            </tr>,
+                                            isExpanded && (
+                                                <tr key={`${item.barkod}-expanded`} className="bg-stone-50/50">
+                                                    <td colSpan={7} className="px-4 py-3 border-b border-stone-100">
+                                                        <div className="pl-8 pr-4 py-2 max-w-xl">
+                                                            <h4 className="text-[11px] font-black text-stone-500 uppercase tracking-wider mb-2">📦 {item.ad} — Son 6 Aylık MF Geçmişi</h4>
+                                                            {mfHistory.length === 0 ? (
+                                                                <p className="text-stone-400 text-xs italic">Son 6 aya ait MF alım/sipariş geçmişi bulunamadı.</p>
+                                                            ) : (
+                                                                <div className="border border-stone-200 rounded-lg overflow-hidden bg-white shadow-inner">
+                                                                    <table className="w-full text-left text-xs border-collapse">
+                                                                        <thead className="bg-stone-100 text-stone-600 border-b border-stone-200">
+                                                                            <tr>
+                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px]">Tarih</th>
+                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px]">Kaynak</th>
+                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px]">MF Baremi</th>
+                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px] text-right">Miktar</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody className="divide-y divide-stone-100 text-stone-700 font-medium">
+                                                                            {mfHistory.map((h, hi) => (
+                                                                                <tr key={hi} className="hover:bg-stone-50/40">
+                                                                                    <td className="px-3 py-1.5 font-mono">{h.date.split('-').reverse().join('.')}</td>
+                                                                                    <td className="px-3 py-1.5">
+                                                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                                                            h.source.includes('Sipariş') ? 'bg-teal-50 text-teal-600' : 'bg-blue-50 text-blue-600'
+                                                                                        }`}>
+                                                                                            {h.source}
+                                                                                        </span>
+                                                                                    </td>
+                                                                                    <td className="px-3 py-1.5 font-bold text-emerald-600">{h.mf}</td>
+                                                                                    <td className="px-3 py-1.5 text-right font-mono">{h.qty}</td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )
+                                        ].filter(Boolean);
+                                    })}
                                 </tbody>
                             </table>
                         </div>

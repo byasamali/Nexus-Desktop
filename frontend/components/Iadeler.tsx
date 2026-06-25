@@ -99,6 +99,66 @@ export default function IadelerPage({ gln }: { gln: string }) {
         XLSX.writeFile(wb, 'iade_listesi.xlsx');
     };
 
+    const exportReturnsToPdf = () => {
+        if (returnsList.length === 0) return;
+        const headers = ['Ürün Adı', 'Barkod', 'İade Adeti'];
+        const rows = returnsList.map(item => [
+            item.ad,
+            item.barkod,
+            item.adet
+        ]);
+
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+
+        const html = `
+            <html>
+                <head>
+                    <title>İade Listesi</title>
+                    <style>
+                        body { font-family: 'Inter', sans-serif; padding: 20px; color: #334155; }
+                        h1 { font-size: 20px; font-weight: 800; margin-bottom: 20px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                        th { background-color: #f8fafc; color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+                        td { padding: 12px 10px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #334155; }
+                        tr:nth-child(even) td { background-color: #fafafa; }
+                        .footer { margin-top: 30px; font-size: 10px; color: #94a3b8; text-align: right; }
+                        @media print {
+                            body { padding: 0; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <h1>İadeler Raporu</h1>
+                    <table>
+                        <thead>
+                            <tr>
+                                ${headers.map(h => `<th>${h}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(row => `
+                                <tr>
+                                    ${row.map(cell => `<td>${cell}</td>`).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    <div class="footer">Oluşturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}</div>
+                    <script>
+                        window.onload = function() {
+                            window.print();
+                            setTimeout(function() { window.close(); }, 500);
+                        }
+                    </script>
+                </body>
+            </html>
+        `;
+
+        printWindow.document.write(html);
+        printWindow.document.close();
+    };
+
     const showSuccess = (msg: string) => {
         setSuccessMsg(msg);
         setTimeout(() => setSuccessMsg(null), 3000);
@@ -132,6 +192,12 @@ export default function IadelerPage({ gln }: { gln: string }) {
                                 className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs shadow-md transition-all active:scale-[0.98]"
                             >
                                 <Download size={14} /> Excel Olarak İndir
+                            </button>
+                            <button
+                                onClick={exportReturnsToPdf}
+                                className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-bold text-xs shadow-md transition-all active:scale-[0.98]"
+                            >
+                                PDF Olarak İndir
                             </button>
                         </>
                     )}

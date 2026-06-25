@@ -6,7 +6,6 @@ import { PackageX, Search, AlertCircle, TrendingDown, Copy, Check, ShoppingCart,
 interface OutOfStockItem {
   barkod: string;
   ad: string;
-  depo?: string;
   aylik_hiz?: number;
 }
 
@@ -16,44 +15,11 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
   const [cartQty, setCartQty] = useState<Record<string, number>>({});
   const [addedToCart, setAddedToCart] = useState<Record<string, boolean>>({});
 
-  const [sortField, setSortField] = useState<string | null>(null);
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-
-  const handleSort = (field: string) => {
-    if (sortField === field) {
-      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('asc');
-    }
-  };
-
-  const filtered = useMemo(() => {
-    const list = (data || []).filter(item =>
+  const filtered = useMemo(() =>
+    (data || []).filter(item =>
       item.ad?.toLowerCase().includes(search.toLowerCase()) ||
       item.barkod?.includes(search)
-    );
-
-    if (sortField) {
-      list.sort((a, b) => {
-        let valA = a[sortField as keyof OutOfStockItem];
-        let valB = b[sortField as keyof OutOfStockItem];
-
-        if (valA === undefined || valA === null) valA = 0;
-        if (valB === undefined || valB === null) valB = 0;
-
-        if (typeof valA === 'string') {
-          return sortOrder === 'asc' 
-            ? valA.localeCompare(valB as string, 'tr') 
-            : (valB as string).localeCompare(valA, 'tr');
-        }
-        return sortOrder === 'asc' 
-          ? (valA as number) - (valB as number) 
-          : (valB as number) - (valA as number);
-      });
-    }
-    return list;
-  }, [data, search, sortField, sortOrder]);
+    ), [data, search]);
 
   const copyBarkod = async (barkod: string) => {
     try {
@@ -119,20 +85,11 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
               <tr>
-                <th onClick={() => handleSort('ad')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">
-                  Ürün {sortField === 'ad' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                </th>
-                <th onClick={() => handleSort('depo')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">
-                  Depo {sortField === 'depo' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                </th>
-                <th onClick={() => handleSort('aylik_hiz')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">
-                  Aylık Hız {sortField === 'aylik_hiz' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                </th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] select-none">Stok</th>
-                <th onClick={() => handleSort('barkod')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">
-                  Barkod {sortField === 'barkod' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                </th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] select-none">Sepete Ekle</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Aylık Hız</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Stok</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Barkod</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Sepete Ekle</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -141,7 +98,6 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
                   <td className="px-6 py-4">
                     <p className="font-bold text-slate-700 group-hover:text-rose-600 transition-colors">{item.ad}</p>
                   </td>
-                  <td className="px-6 py-4 text-slate-500 font-medium text-xs">{item.depo || '—'}</td>
                   <td className="px-6 py-4">
                     {item.aylik_hiz != null && item.aylik_hiz > 0 ? (
                       <div className="flex items-center gap-1.5 text-orange-500 font-bold text-xs">

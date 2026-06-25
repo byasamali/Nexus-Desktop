@@ -28,7 +28,8 @@ window.go = {
       StartDepoProxy: (targetRaw) => Promise.resolve(targetRaw), // In Electron, <webview> handles original URL directly!
       StopDepoProxy: (proxyURL) => Promise.resolve(),
       OpenURLInBrowser: (targetURL) => ipcRenderer.invoke('wails:OpenURLInBrowser', targetURL),
-      GetWebviewPreloadPath: () => ipcRenderer.invoke('wails:GetWebviewPreloadPath')
+      GetWebviewPreloadPath: () => ipcRenderer.invoke('wails:GetWebviewPreloadPath'),
+      AppendOrderResult: (gln, entry) => ipcRenderer.invoke('wails:AppendOrderResult', gln, entry)
     }
   }
 };

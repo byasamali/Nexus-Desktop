@@ -148,6 +148,35 @@ ipcMain.handle('wails:SaveLocalJSON', async (event, gln, filename, content) => {
   }
 });
 
+ipcMain.handle('wails:AppendOrderResult', async (event, gln, entry) => {
+  try {
+    const tenantDir = path.join(pythonDir, 'tenants', gln);
+    if (!fs.existsSync(tenantDir)) {
+      fs.mkdirSync(tenantDir, { recursive: true });
+    }
+    const filePath = path.join(tenantDir, 'as_siparisler.json');
+
+    // Mevcut listeyi oku
+    let orders = [];
+    if (fs.existsSync(filePath)) {
+      try {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) orders = parsed;
+      } catch { orders = []; }
+    }
+
+    // Yeni kaydı ekle
+    orders.push(typeof entry === 'string' ? JSON.parse(entry) : entry);
+    fs.writeFileSync(filePath, JSON.stringify(orders, null, 2), 'utf8');
+    console.log(`[AS Sipariş] Kaydedildi: ${filePath} (toplam ${orders.length} kayıt)`);
+    return 'ok';
+  } catch (err) {
+    console.error('AppendOrderResult error:', err);
+    throw err;
+  }
+});
+
 ipcMain.handle('wails:OpenURLInBrowser', async (event, targetURL) => {
   shell.openExternal(targetURL);
   return true;

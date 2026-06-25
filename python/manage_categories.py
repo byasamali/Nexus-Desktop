@@ -186,6 +186,51 @@ def assign_product(barcode, category_id):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+def assign_bulk(barcodes, category_id):
+    if not barcodes:
+        return {"status": "error", "message": "Barkod listesi boş olamaz"}
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Kategori var mı kontrol et
+        cur.execute("SELECT id FROM categories WHERE id = ?", (category_id,))
+        if not cur.fetchone():
+            conn.close()
+            return {"status": "error", "message": "Belirtilen kategori bulunamadı"}
+            
+        success_count = 0
+        added_count = 0
+        
+        for barcode in barcodes:
+            barcode = str(barcode).strip()
+            if not barcode:
+                continue
+            
+            # Ürün var mı kontrol et
+            cur.execute("SELECT barkod FROM products WHERE barkod = ?", (barcode,))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE products SET kategori_id = ? WHERE barkod = ?", (category_id, barcode))
+                success_count += 1
+            else:
+                # Ekle ve ata
+                cur.execute(
+                    "INSERT INTO products (barkod, urun_adi, master_urun_adi, kategori_id) VALUES (?, ?, ?, ?)",
+                    (barcode, f"Yeni Ürün ({barcode})", f"Yeni Ürün ({barcode})", category_id)
+                )
+                added_count += 1
+                success_count += 1
+                
+        conn.commit()
+        conn.close()
+        return {
+            "status": "success", 
+            "message": f"Toplam {success_count} barkod başarıyla işlendi. ({added_count} yeni ürün eklendi, {success_count - added_count} mevcut ürün güncellendi)"
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 def remove_product(barcode):
     try:
         conn = get_db_connection()
@@ -347,6 +392,8 @@ def main():
         result = search_products(params.get("query", ""), params.get("limit", 50))
     elif action == "assign":
         result = assign_product(params.get("barcode"), params.get("category_id"))
+    elif action == "assign-bulk":
+        result = assign_bulk(params.get("barcodes", []), params.get("category_id"))
     elif action == "remove":
         result = remove_product(params.get("barcode"))
     elif action == "get-product":

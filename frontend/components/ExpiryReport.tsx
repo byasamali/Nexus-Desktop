@@ -23,51 +23,18 @@ function parseMiadStr(raw: string | undefined | null): string {
     }
     return str;
 }
+
 export default function ExpiryReport({ data }: { data: any[] }) {
     const [search, setSearch] = useState("");
-    const [sortField, setSortField] = useState<string | null>(null);
-    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-    const handleSort = (field: string) => {
-        if (sortField === field) {
-            setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortField(field);
-            setSortOrder('asc');
-        }
-    };
+    const activeData = data?.filter(item => item.stok > 0) || [];
 
-    const filteredData = React.useMemo(() => {
-        const filtered = data?.filter(item =>
-            item.ad?.toLowerCase().includes(search.toLowerCase()) ||
-            item.barkod?.includes(search)
-        ) || [];
+    const filteredData = activeData.filter(item =>
+        item.ad?.toLowerCase().includes(search.toLowerCase()) ||
+        item.barkod?.includes(search)
+    );
 
-        if (sortField) {
-            filtered.sort((a, b) => {
-                let valA = a[sortField];
-                let valB = b[sortField];
-
-                if (sortField === 'tutar') {
-                    valA = parseInt(String(valA).replace(/[^\d]/g, ''), 10) || 0;
-                    valB = parseInt(String(valB).replace(/[^\d]/g, ''), 10) || 0;
-                }
-
-                if (valA === undefined || valA === null) valA = 0;
-                if (valB === undefined || valB === null) valB = 0;
-
-                if (typeof valA === 'string') {
-                    return sortOrder === 'asc' 
-                        ? valA.localeCompare(valB, 'tr') 
-                        : valB.localeCompare(valA, 'tr');
-                }
-                return sortOrder === 'asc' ? valA - valB : valB - valA;
-            });
-        }
-        return filtered;
-    }, [data, search, sortField, sortOrder]);
-
-    if (!data || data.length === 0) return (
+    if (!activeData || activeData.length === 0) return (
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-[2rem] border-2 border-dashed border-emerald-100">
             <CalendarClock size={48} className="text-emerald-100 mb-4" />
             <p className="text-emerald-600 font-bold">Yakın miadlı ürününüz bulunmuyor.</p>
@@ -83,7 +50,7 @@ export default function ExpiryReport({ data }: { data: any[] }) {
                     </div>
                     <div>
                         <h2 className="text-2xl font-black text-slate-800 tracking-tight">Miad Risk Analizi</h2>
-                        <p className="text-slate-500 font-medium">Son 6 aya girmiş <b className="text-orange-600">{data.length}</b> kritik ürün var.</p>
+                        <p className="text-slate-500 font-medium">Son 6 aya girmiş <b className="text-orange-600">{activeData.length}</b> kritik ürün var.</p>
                     </div>
                 </div>
                 <div className="relative w-full md:w-80">
@@ -103,18 +70,10 @@ export default function ExpiryReport({ data }: { data: any[] }) {
                     <table className="w-full text-left text-sm">
                         <thead className="bg-orange-50/30 border-b border-orange-100">
                             <tr>
-                                <th onClick={() => handleSort('ad')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-700 select-none">
-                                    Ürün {sortField === 'ad' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                </th>
-                                <th onClick={() => handleSort('stok')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-700 select-none">
-                                    Stok {sortField === 'stok' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                </th>
-                                <th onClick={() => handleSort('miad')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-700 select-none">
-                                    Son Kullanma {sortField === 'miad' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                </th>
-                                <th onClick={() => handleSort('tutar')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right cursor-pointer hover:text-orange-700 select-none">
-                                    Mali Değer {sortField === 'tutar' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                </th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Stok</th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Son Kullanma</th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Mali Değer</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">

@@ -27,7 +27,8 @@ VAR_MAP = {
     "kamu_fiyati": "v88",
     "esdegersiz_ithal": "v89",
     "son_5_depo": "v90",
-    "favori_depo": "v91"
+    "favori_depo": "v91",
+    "son_5_alim_dagilimi": "v95"
 }
 
 # KISA ETİKET KODLARI

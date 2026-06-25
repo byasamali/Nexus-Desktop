@@ -26,8 +26,8 @@ import { DashboardData } from '@/lib/types';
 import {
   Package, Activity, Moon, AlertTriangle, Search,
   Copy, ShoppingCart, BarChart2, Check, ChevronDown, Calendar, Brain,
-  DollarSign, ClipboardList, X, TrendingUp, RefreshCw, MoreVertical, EyeOff, Zap, Download, Layers, Sparkles, ChevronRight,
-  ListX, RotateCcw, PackageX, Star, ArrowRight, Pill, FlaskConical,
+  DollarSign, ClipboardList, X, TrendingUp, RefreshCw, MoreVertical, EyeOff, Zap, Download, Layers, Sparkles, ChevronRight, Info,
+  ListX, RotateCcw, PackageX, Star, ArrowRight, Pill, FlaskConical, Trash2,
   Building2, Users, Wrench, Settings, Menu, Truck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -247,6 +247,60 @@ function renderTavsiye(tavsiye: any): React.ReactNode {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+const getCombinedMfHistory = (barcode: string, alimStr: string, localOrders: any[]) => {
+  const history: Array<{ date: string; mf: string; source: string; qty: number }> = [];
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+  // 1. Parse warehouse purchase history (v95)
+  if (alimStr && alimStr !== 'AL_YOK' && alimStr !== 'ALIM_YOK' && alimStr !== 'YOK') {
+    alimStr.split('|').forEach(entry => {
+      const parts = entry.split(':');
+      if (parts.length >= 2) {
+        const dateStr = parts[0];
+        const val = parts[1];
+        if (val.includes('+')) {
+          const entryDate = new Date(dateStr);
+          if (entryDate >= sixMonthsAgo) {
+            history.push({
+              date: dateStr,
+              mf: val,
+              source: 'Depo Alımı',
+              qty: parseInt(val.split('+')[0]) || 0
+            });
+          }
+        }
+      }
+    });
+  }
+
+  // 2. Local order history
+  if (Array.isArray(localOrders)) {
+    localOrders.forEach(order => {
+      if (order.barkod === barcode && order.durum === 'success') {
+        const entryDate = new Date(order.tarih);
+        if (entryDate >= sixMonthsAgo) {
+          const mfs = [order.mf1, order.mf2, order.mf3].filter(Boolean).join(', ');
+          if (mfs) {
+            const dateStr = entryDate.toISOString().split('T')[0];
+            history.push({
+              date: dateStr,
+              mf: mfs,
+              source: 'AS Ecza (Sipariş)',
+              qty: order.miktar || 0
+            });
+          }
+        }
+      }
+    });
+  }
+
+  // Sort by date descending
+  return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+
 
 function calculateAutoMF(qty: number, baremler: any[]) {
   if (!baremler || !Array.isArray(baremler) || baremler.length === 0) return 0;
@@ -385,7 +439,9 @@ export default function OrderCockpit() {
   // Dynamic categories state and helpers
   const [dbCategories, setDbCategories] = useState<any[]>([]);
   const [dynamicCategoryMap, setDynamicCategoryMap] = useState<Record<number, any>>({});
-  const [showOnlyZeroStock, setShowOnlyZeroStock] = useState(false);
+  const [filterZero, setFilterZero] = useState<'active' | 'passive' | 'excluded'>('active');
+  const [filterTnf, setFilterTnf] = useState<'active' | 'passive' | 'excluded'>('active');
+  const [filterEnteral, setFilterEnteral] = useState<'active' | 'passive' | 'excluded'>('active');
   const [editingCategoryProduct, setEditingCategoryProduct] = useState<any>(null);
   const [editingDbProduct, setEditingDbProduct] = useState<any>(null);
 
@@ -505,7 +561,7 @@ export default function OrderCockpit() {
     }
   };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isKritik, setIsKritik] = useState(false); // Yeni eklendi
+  const [filterKritik, setFilterKritik] = useState<'active' | 'passive' | 'excluded'>('active');
   const [expandedCategory, setExpandedCategory] = useState<'ilac' | 'disi' | null>(null);
   const [ignoredBarkods, setIgnoredBarkods] = useState<Set<string>>(new Set());
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
@@ -521,15 +577,84 @@ export default function OrderCockpit() {
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [selectedBarkods, setSelectedBarkods] = useState<Set<string>>(new Set());
   const [visibleGroupsCount, setVisibleGroupsCount] = useState(20);
-  const [showOnlyEsdesiz, setShowOnlyEsdesiz] = useState(false);
+  const [filterEsdegersiz, setFilterEsdegersiz] = useState<'active' | 'passive' | 'excluded'>('active');
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const cartSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
   const [selectedAnalysis, setSelectedAnalysis] = useState<any | null>(null);
+  const [modalQty, setModalQty] = useState<number>(0);
+  const [modalMf, setModalMf] = useState<number>(0);
+  const [localOrders, setLocalOrders] = useState<any[]>([]);
   const [selectedGrup, setSelectedGrup] = useState<any | null>(null);
   const [menuStates, setMenuStates] = useState({ stok: true, operasyon: false, ag: false, analitik: false, araclar: false });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mainCategory, setMainCategory] = useState<'ilac' | 'disi'>('ilac');
+  const [filterIlac, setFilterIlac] = useState<'active' | 'passive' | 'excluded'>('active');
+  const [filterDisi, setFilterDisi] = useState<'active' | 'passive' | 'excluded'>('active');
+  useEffect(() => {
+    if (selectedAnalysis) {
+      const barcode = selectedAnalysis.v1;
+      const itemCart = cart[barcode] || { qty: 0, mf: 0, inCart: false };
+      const defaultQty = itemCart.qty > 0 ? itemCart.qty : (Math.round(selectedAnalysis.v26 || 0) + Math.round(selectedAnalysis.v27 || 0) || 0);
+      setModalQty(defaultQty);
+      const defaultMf = itemCart.qty > 0 ? itemCart.mf : calculateAutoMF(defaultQty, selectedAnalysis.mf_baremleri || []);
+      setModalMf(defaultMf);
+    } else {
+      setModalQty(0);
+      setModalMf(0);
+    }
+  }, [selectedAnalysis]);
+
+  const handleModalQtyChange = (val: number) => {
+    setModalQty(val);
+    if (selectedAnalysis) {
+      setModalMf(calculateAutoMF(val, selectedAnalysis.mf_baremleri || []));
+    }
+  };
+
+  const handleModalAddToCart = () => {
+    if (!selectedAnalysis) return;
+    updateCart(selectedAnalysis.v1, modalQty, modalMf, selectedAnalysis);
+    const barcode = selectedAnalysis.v1;
+    const itemCart = cart[barcode] || { qty: 0, mf: 0, inCart: false };
+    if (!itemCart.inCart) {
+      toggleCartItem(barcode, selectedAnalysis);
+    }
+  };
+
+  const handleModalRemoveFromCart = () => {
+    if (!selectedAnalysis) return;
+    setCart(prev => {
+      return {
+        ...prev,
+        [selectedAnalysis.v1]: {
+          ...prev[selectedAnalysis.v1],
+          qty: 0,
+          mf: 0,
+          inCart: false
+        }
+      };
+    });
+    setModalQty(0);
+    setModalMf(0);
+  };
+
+  const nextFilterState = (current: 'active' | 'passive' | 'excluded'): 'active' | 'passive' | 'excluded' => {
+    if (current === 'active') return 'passive';
+    if (current === 'passive') return 'excluded';
+    return 'active';
+  };
+
+  const getFilterBtnClass = (
+    state: 'active' | 'passive' | 'excluded',
+    activeClass: string
+  ) => {
+    return cn(
+      "h-9 px-3 rounded-xl border font-bold text-[11px] transition-all flex items-center gap-1.5 shrink-0",
+      state === 'active' ? activeClass :
+      state === 'excluded' ? "bg-red-50 border-red-200 text-red-600 hover:bg-red-100/70 hover:border-red-300 line-through decoration-red-400 decoration-2" :
+      "bg-white border-stone-200 text-stone-400 hover:border-stone-300 hover:text-stone-600"
+    );
+  };
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [cockpitSortField, setCockpitSortField] = useState<string | null>(null);
   const [cockpitSortOrder, setCockpitSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -561,7 +686,7 @@ export default function OrderCockpit() {
   };
 
   const handleSelectAllVisible = () => {
-    const list = mainCategory === 'ilac' ? filteredIlacGroups : filteredDisiGroups;
+    const list = filteredGroups;
     const allVisibleBarkods = list.flatMap((g: any) => g.detaylar.map((u: any) => u.v1));
     setSelectedBarkods(prev => {
       const next = new Set(prev);
@@ -778,6 +903,17 @@ export default function OrderCockpit() {
       if (isWails) {
         const cached = await (window as any).go.main.App.LoadLocalJSON(res.gln || "local", "cart.json");
         if (cached && cached !== '{}') savedCartObj = JSON.parse(cached);
+        try {
+          const raw = await (window as any).go.main.App.LoadLocalJSON(res.gln || "local", "as_siparisler.json");
+          if (raw && raw !== '{}') {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              setLocalOrders(parsed);
+            }
+          }
+        } catch (e) {
+          console.error("Local orders load failed:", e);
+        }
       } else {
         const { data: { user } } = await supabase.auth.getUser();
         const { data: cartData } = await supabase.from('kullanici_sepetleri').select('sepet').eq('eczane_id', user?.id).maybeSingle();
@@ -789,7 +925,7 @@ export default function OrderCockpit() {
       if (res.gruplar) {
         res.gruplar.forEach((g: any) => {
           g.detaylar.forEach((u: any) => {
-            if (!initialCart[u.v1] && u.v26 > 0) initialCart[u.v1] = { qty: u.v26, mf: 0, inCart: false, ad: u.v2, depo: u.v91 };
+            if (!initialCart[u.v1] && u.v26 > 0) initialCart[u.v1] = { qty: u.v26, mf: 0, inCart: false, ad: u.v2, depo: u.v91, v95: u.v95 };
           });
         });
       }
@@ -859,14 +995,14 @@ export default function OrderCockpit() {
       let finalMf = manualMf;
       if (manualMf === undefined && urun) finalMf = calculateAutoMF(qty, urun.mf_baremleri);
       const existing = prev[barkod] || { qty: 0, mf: 0, inCart: false, ad: "Bilinmeyen Ürün", depo: "Depo Belirsiz" };
-      return { ...prev, [barkod]: { ...existing, qty, mf: finalMf || 0, ad: urun?.v2 || existing.ad, depo: urun?.v91 || existing.depo } };
+      return { ...prev, [barkod]: { ...existing, qty, mf: finalMf || 0, ad: urun?.v2 || existing.ad, depo: urun?.v91 || existing.depo, v95: urun?.v95 || existing.v95 } };
     });
   };
 
   const toggleCartItem = (barkod: string, urun: any) => {
     setCart(prev => {
       const existing = prev[barkod] || { qty: 0, mf: 0, inCart: false, ad: urun.v2, depo: urun.v91 };
-      return { ...prev, [barkod]: { ...existing, inCart: !existing.inCart } };
+      return { ...prev, [barkod]: { ...existing, inCart: !existing.inCart, v95: urun.v95 || existing.v95 } };
     });
   };
 
@@ -892,14 +1028,45 @@ export default function OrderCockpit() {
     });
   };
 
-  const getFilteredGroups = (type: 'ilac' | 'disi') => {
+  const getFilteredGroups = () => {
     if (!data?.gruplar) return [];
     const q = searchQuery.toLowerCase();
     return data.gruplar
       .map((g: any) => {
         const filteredDetaylar = g.detaylar.filter((urun: any) => {
           if (ignoredBarkods.has(urun.v1)) return false;
-          if (showOnlyZeroStock && !zeroStockBarcodes.has(urun.v1)) return false;
+
+          const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
+          const isCrit = (g.tags || "").includes('ks') || (g.kritik_puan || 0) > 10;
+          const isZero = zeroStockBarcodes.has(urun.v1);
+          const isTnf = urun.kategori_id === 15 || (urun.kategori_id && dynamicCategoryMap[urun.kategori_id]?.tam_yol_ids?.includes(15)) || false;
+          const isEnteral = urun.kategori_id === 14 || (urun.kategori_id && dynamicCategoryMap[urun.kategori_id]?.tam_yol_ids?.includes(14)) || false;
+          const isEsdegersiz = g.detaylar.length === 1;
+
+          const filterMatches = [
+            { state: filterIlac, matches: isPharmaceutical },
+            { state: filterDisi, matches: !isPharmaceutical },
+            { state: filterKritik, matches: isCrit },
+            { state: filterZero, matches: isZero },
+            { state: filterTnf, matches: isTnf },
+            { state: filterEnteral, matches: isEnteral },
+            { state: filterEsdegersiz, matches: isEsdegersiz }
+          ];
+
+          // 1. Dışlama Kontrolü (State 3 - Excluded)
+          const isExcluded = filterMatches.some(f => f.state === 'excluded' && f.matches);
+          if (isExcluded) return false;
+
+          // 2. Dahil Etme Kontrolü (State 1 - Active)
+          const hasActiveFilters = filterMatches.some(f => f.state === 'active');
+          if (hasActiveFilters) {
+            const matchesAnyActive = filterMatches.some(f => f.state === 'active' && f.matches);
+            if (!matchesAnyActive) return false;
+          } else {
+            // Aktif filtre yoksa hiçbirini gösterme
+            return false;
+          }
+
           const matchSearch = q === "" || (urun.v2 || "").toLowerCase().includes(q) || (urun.v1 || "").toLowerCase().includes(q);
           if (q !== "" && !matchSearch) return false;
           const itemCart = cart[urun.v1] || { qty: 0 };
@@ -923,49 +1090,47 @@ export default function OrderCockpit() {
       })
       .filter((g: any) => {
         if (g.detaylar.length === 0) return false;
-        const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
-        if (type === 'ilac' && !isPharmaceutical) return false;
-        if (type === 'disi' && isPharmaceutical) return false;
-
-        // Kritik filtreleme logic
-        if (isKritik) {
-          if (!(g.tags || "").includes('ks') && (g.kritik_puan || 0) <= 10) return false;
-        } else {
-          // Normal öneri görünümü (aktif tab oneri ise)
-          if (activeTab === 'oneri' && g.toplam_oneri <= 0 && (g.kritik_puan || 0) < 50) return false;
-        }
-        if (showOnlyEsdesiz && (g.original_count ?? g.detaylar.length) > 1) return false;
+        // Normal öneri görünümü (aktif tab oneri ise) gürültü azaltma thresholding
+        if (activeTab === 'oneri' && g.toplam_oneri <= 0 && (g.kritik_puan || 0) < 50) return false;
         return true;
       })
       .sort((a: any, b: any) => {
         if (cockpitSortField) {
-          let valA, valB;
-          if (cockpitSortField === 'ad') {
-            valA = a.lider_adi || '';
-            valB = b.lider_adi || '';
-          } else if (cockpitSortField === 'hiz') {
-            valA = a.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
-            valB = b.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
-          } else if (cockpitSortField === 'stok') {
-            valA = a.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
-            valB = b.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
-          } else if (cockpitSortField === 'iht') {
-            valA = a.detaylar.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (u.v20 || 0) * 30 - (u.v4 || 0))), 0);
-            valB = b.detaylar.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (u.v20 || 0) * 30 - (u.v4 || 0))), 0);
-          } else if (cockpitSortField === 'oneri') {
-            valA = a.toplam_oneri || 0;
-            valB = b.toplam_oneri || 0;
+          let valA: any = 0;
+          let valB: any = 0;
+
+          switch (cockpitSortField) {
+            case 'ad':
+              valA = a.lider_adi || '';
+              valB = b.lider_adi || '';
+              break;
+            case 'hiz':
+              valA = a.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
+              valB = b.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
+              break;
+            case 'stok':
+              valA = a.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
+              valB = b.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
+              break;
+            case 'iht':
+              valA = a.detaylar.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (u.v20 || 0) * 30 - (u.v4 || 0))), 0);
+              valB = b.detaylar.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (u.v20 || 0) * 30 - (u.v4 || 0))), 0);
+              break;
+            case 'oneri':
+              valA = a.toplam_oneri || 0;
+              valB = b.toplam_oneri || 0;
+              break;
           }
 
-          if (valA === undefined || valA === null) valA = 0;
-          if (valB === undefined || valB === null) valB = 0;
-
-          if (typeof valA === 'string') {
-            return cockpitSortOrder === 'asc' 
-              ? valA.localeCompare(valB, 'tr') 
+          if (typeof valA === 'string' && typeof valB === 'string') {
+            return cockpitSortOrder === 'asc'
+              ? valA.localeCompare(valB, 'tr')
               : valB.localeCompare(valA, 'tr');
           }
-          return cockpitSortOrder === 'asc' ? valA - valB : valB - valA;
+
+          const numA = Number(valA) || 0;
+          const numB = Number(valB) || 0;
+          return cockpitSortOrder === 'asc' ? numA - numB : numB - numA;
         }
 
         if (activeTab === 'ks') return (b.kritik_puan || 0) - (a.kritik_puan || 0);
@@ -973,8 +1138,15 @@ export default function OrderCockpit() {
       });
   };
 
-  const filteredIlacGroups = useMemo(() => getFilteredGroups('ilac'), [data, searchQuery, ignoredBarkods, showOnlyOrders, showOnlyEsdesiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, showOnlyZeroStock]);
-  const filteredDisiGroups = useMemo(() => getFilteredGroups('disi'), [data, searchQuery, ignoredBarkods, showOnlyOrders, showOnlyEsdesiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, showOnlyZeroStock]);
+  const filteredGroups = useMemo(() => getFilteredGroups(), [data, searchQuery, ignoredBarkods, showOnlyOrders, filterEsdegersiz, selectedMainCats, selectedAltCats, excludedAltCats, selectedColors, activeTab, cart, cockpitSortField, cockpitSortOrder, filterZero, filterTnf, filterEnteral, filterIlac, filterDisi, filterKritik]);
+
+  const filteredIlacGroups = useMemo(() => {
+    return filteredGroups.filter(g => isDynamicPharmaceuticalCategory(g.kategori_id || 0));
+  }, [filteredGroups]);
+
+  const filteredDisiGroups = useMemo(() => {
+    return filteredGroups.filter(g => !isDynamicPharmaceuticalCategory(g.kategori_id || 0));
+  }, [filteredGroups]);
 
   const cartSummary = useMemo(() => {
     const vals = Object.values(cart).filter(c => c.inCart && c.qty > 0);
@@ -1201,12 +1373,12 @@ export default function OrderCockpit() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
                   <StatPill label="Sipariş Sepeti" value={cartSummary.kutu} sub={`${cartSummary.items} kalem`} color="teal" icon={ShoppingCart} />
                   <StatPill
-                    label={isKritik ? "Kritik Stok" : "AI Önerisi"}
-                    value={mainCategory === 'ilac' ? filteredIlacGroups.length : filteredDisiGroups.length}
-                    sub={isKritik ? "acil tedarik" : "sipariş fırsatı"}
-                    color={isKritik ? "red" : "violet"}
-                    icon={isKritik ? Zap : Sparkles}
-                    onClick={() => setIsKritik(!isKritik)} // Tıklayınca modu değiştirir
+                    label={filterKritik !== 'active' ? "AI Önerisi" : "Kritik Stok"}
+                    value={filteredGroups.length}
+                    sub={filterKritik !== 'active' ? "sipariş fırsatı" : "acil tedarik"}
+                    color={filterKritik !== 'active' ? "violet" : "red"}
+                    icon={filterKritik !== 'active' ? Sparkles : Zap}
+                    onClick={() => setFilterKritik(nextFilterState(filterKritik))} // Tıklayınca modu değiştirir
                   />
                   <StatPill label="Hareketsiz Stok" value={data?.olu_stok_listesi?.length || 0} sub="ölü stok" color="slate" icon={Moon} onClick={() => setActiveTab('os')} />
                   <StatPill label="Miad Riski" value={data?.miad_risk_listesi?.length || 0} sub="son 6 ay" color="amber" icon={AlertTriangle} onClick={() => setActiveTab('mr')} />
@@ -1218,32 +1390,60 @@ export default function OrderCockpit() {
                   {/* Panel header — Satır 1: toggle + kritik + arama */}
                   <div className="px-3 md:px-5 py-3 border-b border-stone-100">
                     <div className="flex items-center gap-2">
-                      {/* İlaç / İlaç Dışı Toggle */}
-                      <div className="flex items-center rounded-xl overflow-hidden border border-stone-200 shrink-0">
-                        <button onClick={() => setMainCategory('ilac')}
-                          className={cn("h-9 px-3 md:px-4 text-[12px] font-bold transition-all", mainCategory === 'ilac' ? "bg-stone-900 text-white" : "bg-white text-stone-500")}>İlaç</button>
-                        <button onClick={() => setMainCategory('disi')}
-                          className={cn("h-9 px-3 md:px-4 text-[12px] font-bold transition-all", mainCategory === 'disi' ? "bg-stone-900 text-white" : "bg-white text-stone-500")}>İlaç Dışı</button>
+                      {/* 7'li Yatay Filtre Grubu */}
+                      <div className="flex-1 flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5">
+                        {/* İlaç */}
+                        <button onClick={() => setFilterIlac(nextFilterState(filterIlac))}
+                          className={getFilterBtnClass(filterIlac, "bg-stone-900 border-stone-900 text-white shadow-sm")}>
+                          <Pill size={14} className={filterIlac === 'active' ? "fill-white" : ""} />
+                          <span>İlaç</span>
+                        </button>
+
+                        {/* İlaç Dışı */}
+                        <button onClick={() => setFilterDisi(nextFilterState(filterDisi))}
+                          className={getFilterBtnClass(filterDisi, "bg-stone-900 border-stone-900 text-white shadow-sm")}>
+                          <Sparkles size={14} className={filterDisi === 'active' ? "fill-white" : ""} />
+                          <span>İlaç Dışı</span>
+                        </button>
+
+                        {/* Kritik */}
+                        <button onClick={() => setFilterKritik(nextFilterState(filterKritik))}
+                          className={getFilterBtnClass(filterKritik, "bg-red-600 border-red-600 text-white shadow-sm shadow-red-200")}>
+                          <Zap size={14} className={filterKritik === 'active' ? "fill-white" : ""} />
+                          <span>Kritik</span>
+                        </button>
+
+                        {/* Stoğu Tükenmiş */}
+                        <button onClick={() => setFilterZero(nextFilterState(filterZero))}
+                          className={getFilterBtnClass(filterZero, "bg-rose-600 border-rose-600 text-white shadow-sm shadow-rose-200")}>
+                          <PackageX size={14} className={filterZero === 'active' ? "fill-white" : ""} />
+                          <span>Stoğu Tükenmiş</span>
+                        </button>
+
+                        {/* TNF */}
+                        <button onClick={() => setFilterTnf(nextFilterState(filterTnf))}
+                          className={getFilterBtnClass(filterTnf, "bg-violet-600 border-violet-600 text-white shadow-sm shadow-violet-200")}>
+                          <FlaskConical size={14} className={filterTnf === 'active' ? "fill-white" : ""} />
+                          <span>TNF</span>
+                        </button>
+
+                        {/* Enteral */}
+                        <button onClick={() => setFilterEnteral(nextFilterState(filterEnteral))}
+                          className={getFilterBtnClass(filterEnteral, "bg-amber-600 border-amber-600 text-white shadow-sm shadow-amber-200")}>
+                          <Activity size={14} className={filterEnteral === 'active' ? "fill-white" : ""} />
+                          <span>Enteral</span>
+                        </button>
+
+                        {/* Eşdeğersiz */}
+                        <button onClick={() => setFilterEsdegersiz(nextFilterState(filterEsdegersiz))}
+                          className={getFilterBtnClass(filterEsdegersiz, "bg-indigo-600 border-indigo-600 text-white shadow-sm shadow-indigo-200")}>
+                          <Layers size={14} className={filterEsdegersiz === 'active' ? "fill-white" : ""} />
+                          <span>Eşdeğersiz</span>
+                        </button>
                       </div>
 
-                      {/* Kritik Modu Butonu (Yeni) */}
-                      <button onClick={() => setIsKritik(!isKritik)}
-                        className={cn("h-10 md:h-9 px-4 md:px-3 rounded-xl border font-bold text-[11px] transition-all flex items-center gap-1.5 shrink-0",
-                          isKritik ? "bg-red-600 border-red-600 text-white shadow-sm shadow-red-200" : "bg-white border-stone-200 text-stone-500 hover:border-red-200 hover:text-red-600")}>
-                        <Zap size={14} className={isKritik ? "fill-white" : ""} />
-                        <span>Kritik</span>
-                      </button>
-
-                      {/* Stoğu Tükenmiş Butonu */}
-                      <button onClick={() => setShowOnlyZeroStock(!showOnlyZeroStock)}
-                        className={cn("h-10 md:h-9 px-4 md:px-3 rounded-xl border font-bold text-[11px] transition-all flex items-center gap-1.5 shrink-0",
-                          showOnlyZeroStock ? "bg-rose-600 border-rose-600 text-white shadow-sm shadow-rose-200" : "bg-white border-stone-200 text-stone-500 hover:border-rose-200 hover:text-rose-600")}>
-                        <PackageX size={14} className={showOnlyZeroStock ? "fill-white" : ""} />
-                        <span>Stoğu Tükenmiş</span>
-                      </button>
-
                       {/* Arama (flex-1 sayesinde kalan alanı kaplar) */}
-                      <div className="relative flex-1 min-w-0 max-w-md ml-auto">
+                      <div className="relative flex-1 min-w-0 max-w-[200px] ml-auto">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-stone-400" />
                         <input type="text" placeholder="Ürün ara..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                           className="w-full pl-7 pr-3 h-9 text-[11px] bg-stone-50 border border-stone-200 rounded-lg outline-none focus:bg-white transition-all" />
@@ -1276,12 +1476,7 @@ export default function OrderCockpit() {
                         )}
                       </button>
 
-                      <button onClick={() => setShowOnlyEsdesiz(!showOnlyEsdesiz)}
-                        className={cn("h-8 px-2.5 text-[11px] font-semibold rounded-lg border transition-all flex items-center gap-1.5 shrink-0",
-                          showOnlyEsdesiz ? "bg-violet-600 text-white border-violet-600" : "bg-white text-stone-600 border-stone-200 hover:border-stone-300")}>
-                        {showOnlyEsdesiz && <Check size={10} />}
-                        <span className="whitespace-nowrap">Eşdeğersiz</span>
-                      </button>
+                      {/* Eşdeğersiz butonu kaldırıldı, üst satırdaki 7'li filtre grubuna eklendi */}
 
                       <button onClick={() => setShowOnlyOrders(!showOnlyOrders)}
                         className={cn("h-8 px-2.5 text-[11px] font-semibold rounded-lg border transition-all flex items-center gap-1.5 shrink-0",
@@ -1325,7 +1520,7 @@ export default function OrderCockpit() {
 
                   {/* İÇERİK — mobilde kart listesi, masaüstünde tablo */}
                   {(() => {
-                    const list = mainCategory === 'ilac' ? filteredIlacGroups : filteredDisiGroups;
+                    const list = filteredGroups;
                     if (list.length === 0) return <div className="p-8"><EmptyState /></div>;
                     return (
                       <>
@@ -1346,7 +1541,7 @@ export default function OrderCockpit() {
                             <colgroup>
                               <col style={{ width: '45px' }} /> {/* Checkbox ve Çizgi Kolonu */}
                               <col /> {/* Ürün Bilgisi */}
-                              <col style={{ width: '220px' }} /> {/* Tahmini Satış */}
+                              <col style={{ width: '180px' }} /> {/* Tahmini Satış */}
                               <col style={{ width: '56px' }} />
                               <col style={{ width: '56px' }} />
                               <col style={{ width: '68px' }} />
@@ -1378,7 +1573,7 @@ export default function OrderCockpit() {
                                   selectedBarkods={selectedBarkods}
                                   setSelectedBarkods={setSelectedBarkods}
                                   onGrupDetail={setSelectedGrup}
-                                  mainCategory={mainCategory} // Yeni: kategori bilgisi gönderiliyor
+                                  showTree={isDynamicPharmaceuticalCategory(g.kategori_id || 0)}
                                   onEditCategory={setEditingCategoryProduct}
                                   onAddToYokListesi={handleAddToYokListesi}
                                   onEditProductDetails={setEditingDbProduct}
@@ -1407,7 +1602,7 @@ export default function OrderCockpit() {
                 {activeTab === 'rapor' && <GeneralReports data={data} />}
                 {activeTab === 'tahmin' && <PredictionsReport data={data} />}
                 {activeTab === 'yok_listesi' && <YokListesi data={data} gln={data?.gln || 'local'} />}
-                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} />}
+                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} />}
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}
@@ -1429,21 +1624,7 @@ export default function OrderCockpit() {
 
       {/* MOBİL BOTTOM NAV */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-100 z-30 pb-safe">
-        {/* İlaç / İlaç Dışı toggle — sadece main view'de */}
-        {isMainView && (
-          <div className="flex border-b border-stone-100">
-            <button onClick={() => setMainCategory('ilac')}
-              className={cn("flex-1 py-2 text-[11px] font-semibold transition-all",
-                mainCategory === 'ilac' ? "text-stone-900 border-b-2 border-stone-900" : "text-stone-400")}>
-              İlaç <span className="text-[10px] ml-1 opacity-60">{filteredIlacGroups.length}</span>
-            </button>
-            <button onClick={() => setMainCategory('disi')}
-              className={cn("flex-1 py-2 text-[11px] font-semibold transition-all",
-                mainCategory === 'disi' ? "text-stone-900 border-b-2 border-stone-900" : "text-stone-400")}>
-              İlaç Dışı <span className="text-[10px] ml-1 opacity-60">{filteredDisiGroups.length}</span>
-            </button>
-          </div>
-        )}
+        {/* Mobil İlaç/İlaç Dışı toggle kaldırıldı, üstteki 7'li filtre grubu kullanılıyor */}
         <div className="flex items-center h-16 px-2">
           {[
             { id: 'oneri', icon: Sparkles, label: 'Öneri' },
@@ -1531,12 +1712,14 @@ export default function OrderCockpit() {
 
                   {/* Filtre pill'leri */}
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button onClick={() => setShowOnlyEsdesiz(!showOnlyEsdesiz)}
-                      className={cn("h-8 px-3 text-[11px] font-semibold rounded-lg border transition-all",
-                        showOnlyEsdesiz
-                          ? "bg-violet-600 text-white border-violet-600"
-                          : "bg-white text-stone-500 border-stone-200 hover:border-stone-300 hover:text-stone-700")}>
-                      {showOnlyEsdesiz && <Check size={10} className="inline mr-1" />}Eşdeğersiz
+                    <button onClick={() => setFilterEsdegersiz(nextFilterState(filterEsdegersiz))}
+                      className={cn("h-8 px-3 text-[11px] font-semibold rounded-lg border transition-all flex items-center gap-1.5",
+                        filterEsdegersiz === 'active' ? "bg-violet-600 border-violet-600 text-white shadow-sm" :
+                        filterEsdegersiz === 'excluded' ? "bg-red-50 border-red-200 text-red-600 line-through decoration-red-400 decoration-2" :
+                        "bg-white text-stone-500 border-stone-200 hover:border-stone-300 hover:text-stone-700"
+                      )}>
+                      {filterEsdegersiz === 'active' && <Check size={10} className="inline mr-1" />}
+                      <span>Eşdeğersiz</span>
                     </button>
                     <button onClick={() => setShowOnlyOrders(!showOnlyOrders)}
                       className={cn("h-8 px-3 text-[11px] font-semibold rounded-lg border transition-all",
@@ -1608,7 +1791,7 @@ export default function OrderCockpit() {
                       <colgroup>
                         <col style={{ width: '40px' }} />
                         <col />
-                        <col style={{ width: '220px' }} />
+                        <col style={{ width: '180px' }} />
                         <col style={{ width: '56px' }} />
                         <col style={{ width: '56px' }} />
                         <col style={{ width: '68px' }} />
@@ -1683,6 +1866,10 @@ export default function OrderCockpit() {
             rawGrup={data?.gruplar?.find((g: any) => g.lider_adi === selectedGrup.lider_adi)}
             onClose={() => setSelectedGrup(null)}
             getBreadcrumb={getDynamicBreadcrumb}
+            cart={cart}
+            updateCart={updateCart}
+            toggleCartItem={toggleCartItem}
+            setCart={setCart}
           />
         )}
       </AnimatePresence>
@@ -1745,8 +1932,61 @@ export default function OrderCockpit() {
                   const shelfLifeColor = stock <= 0 ? 'text-red-500' : dailySpeed <= 0 ? 'text-stone-400' : lifeDays <= 15 ? 'text-red-500' : lifeDays > 180 ? 'text-amber-500' : 'text-teal-600';
 
                   return (
-                    <table className="w-full text-left border-collapse text-sm">
-                      <tbody className="divide-y divide-stone-100">
+                    <>
+                      {/* HIZLI SİPARİŞ BANNERI */}
+                      <div className="bg-teal-50/40 border-b border-stone-100 p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-xl bg-teal-100 flex items-center justify-center text-teal-600 shrink-0">
+                            <ShoppingCart size={18} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-stone-900 text-sm">Hızlı Sipariş</h4>
+                            <p className="text-xs text-stone-500">Miktar belirleyip sepetinize ekleyin veya güncelleyin.</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-stone-200 shadow-sm max-w-sm">
+                          <div className="w-20">
+                            <label className="block text-[9px] text-stone-400 font-black uppercase tracking-wider mb-0.5 pl-1">Miktar</label>
+                            <input
+                              type="number"
+                              value={modalQty}
+                              onChange={e => handleModalQtyChange(Math.max(0, parseInt(e.target.value) || 0))}
+                              className="w-full h-8 px-2 border border-stone-200 rounded-lg font-bold font-mono text-xs outline-none focus:border-teal-500 bg-stone-50/30 text-center"
+                              min="0"
+                            />
+                          </div>
+                          <div className="w-20">
+                            <label className="block text-[9px] text-stone-400 font-black uppercase tracking-wider mb-0.5 pl-1">MF Baremi</label>
+                            <input
+                              type="number"
+                              value={modalMf}
+                              onChange={e => setModalMf(Math.max(0, parseInt(e.target.value) || 0))}
+                              className="w-full h-8 px-2 border border-stone-200 rounded-lg font-bold font-mono text-xs text-teal-600 outline-none focus:border-teal-500 bg-stone-50/30 text-center"
+                              min="0"
+                            />
+                          </div>
+                          <div className="flex gap-1.5 pt-4">
+                            <button
+                              onClick={handleModalAddToCart}
+                              className="h-8 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-lg shadow-sm transition-all flex items-center gap-1 shrink-0"
+                            >
+                              <Check size={12} /> {cart[selectedAnalysis.v1]?.inCart ? "Güncelle" : "Ekle"}
+                            </button>
+                            {cart[selectedAnalysis.v1]?.inCart && (
+                              <button
+                                onClick={handleModalRemoveFromCart}
+                                className="h-8 w-8 border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs rounded-lg transition-all flex items-center justify-center shrink-0"
+                                title="Sepetten Çıkar"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <table className="w-full text-left border-collapse text-sm">
+                        <tbody className="divide-y divide-stone-100">
 
                         {/* KÜNYEe */}
                         <tr className="hover:bg-stone-50/50 transition-colors">
@@ -1754,12 +1994,11 @@ export default function OrderCockpit() {
                             <div className="flex items-center gap-2"><Package size={14} className="text-blue-500" /> Künye</div>
                           </th>
                           <td className="p-5 align-top">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                               {[
                                 { label: 'Mevcut Stok', val: stock, cls: stock <= 0 ? 'text-red-500' : 'text-stone-800' },
-                                { label: 'Aylık Hız', val: (dailySpeed * 30).toFixed(1), cls: 'text-stone-800' },
+                                { label: 'Aylık Ortalama Satış', val: (dailySpeed * 30).toFixed(1), cls: 'text-stone-800' },
                                 { label: 'Stok Ömrü', val: shelfLifeText, cls: shelfLifeColor },
-                                { label: 'Ana Depo', val: selectedAnalysis.v91 || '-', cls: 'text-stone-800 text-xs' },
                               ].map(k => (
                                 <div key={k.label} className="bg-white p-3 rounded-xl border border-stone-100 shadow-sm">
                                   <p className="text-[10px] text-stone-400 font-bold uppercase mb-0.5">{k.label}</p>
@@ -1767,6 +2006,54 @@ export default function OrderCockpit() {
                                 </div>
                               ))}
                             </div>
+                          </td>
+                        </tr>
+
+
+
+                        {/* MF HAREKETLERİ */}
+                        <tr className="hover:bg-stone-50/50 transition-colors">
+                          <th className="w-[25%] p-5 bg-stone-50/30 text-xs font-black text-stone-400 uppercase tracking-widest align-top border-r border-stone-100">
+                            <div className="flex items-center gap-2"><Activity size={14} className="text-emerald-500" /> MF Hareketleri</div>
+                          </th>
+                          <td className="p-5 align-top">
+                            {(() => {
+                              const history = getCombinedMfHistory(selectedAnalysis.v1, selectedAnalysis.v95, localOrders);
+                              if (history.length === 0) {
+                                return <p className="text-stone-400 text-xs font-medium italic">Son 6 aya ait MF alım/sipariş hareketi bulunamadı.</p>;
+                              }
+                              return (
+                                <div className="border border-stone-100 rounded-xl overflow-hidden shadow-sm bg-white">
+                                  <table className="w-full text-left text-xs border-collapse">
+                                    <thead className="bg-stone-50/70 border-b border-stone-100 text-stone-500">
+                                      <tr>
+                                        <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Tarih</th>
+                                        <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Kaynak</th>
+                                        <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">MF Baremi</th>
+                                        <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px] text-right">Miktar</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-stone-50 font-medium text-stone-700">
+                                      {history.map((h, i) => (
+                                        <tr key={i} className="hover:bg-stone-50/40">
+                                          <td className="px-4 py-2 font-mono">{h.date.split('-').reverse().join('.')}</td>
+                                          <td className="px-4 py-2">
+                                            <span className={cn(
+                                              "px-2 py-0.5 rounded text-[10px] font-bold",
+                                              h.source.includes('Sipariş') ? 'bg-teal-50 text-teal-700' : 'bg-blue-50 text-blue-700'
+                                            )}>
+                                              {h.source}
+                                            </span>
+                                          </td>
+                                          <td className="px-4 py-2 font-bold text-emerald-600">{h.mf}</td>
+                                          <td className="px-4 py-2 text-right font-mono">{h.qty}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
                           </td>
                         </tr>
 
@@ -1814,7 +2101,8 @@ export default function OrderCockpit() {
 
                       </tbody>
                     </table>
-                  );
+                  </>
+                );
                 })()}
               </div>
             </motion.div>
@@ -2092,9 +2380,13 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
         <input type="checkbox" checked={isSel} onChange={toggleSel}
           className="w-4 h-4 mt-0.5 rounded border-stone-300 text-teal-600 shrink-0" />
         <div className="flex-1 min-w-0">
-          <button onClick={() => openAnalysis(urun)} className="text-left w-full">
-            <span className="font-semibold text-[13px] text-stone-900 leading-snug block">{urun.v2}</span>
-          </button>
+          <div className="flex items-center gap-1.5 w-full">
+            <button onClick={() => openAnalysis(urun)} className="text-left flex-1 min-w-0">
+              <span className="font-semibold text-[13px] text-stone-900 leading-snug block truncate">
+                {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
+              </span>
+            </button>
+          </div>
           <div className="flex items-center gap-2 mt-1">
             <button onClick={() => copyFn(urun.v1)}
               className="font-mono text-[10px] text-stone-400 bg-stone-50 px-1.5 py-0.5 rounded border border-stone-200 flex items-center gap-1">
@@ -2165,11 +2457,10 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
   );
 }
 
-function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, mainCategory, onEditCategory, onAddToYokListesi, onEditProductDetails }: any) {
+function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails }: any) {
   const [isOpen, setIsOpen] = useState(true);
   const originalCount = grup.original_count ?? grup.detaylar.length;
   const isSingle = originalCount === 1;
-  const showTree = mainCategory === 'ilac'; // Sadece ilaçta ağaç yapısı göster
 
   const totalSpeed = grup.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
   const totalStock = grup.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
@@ -2322,7 +2613,7 @@ const TableProductRow = React.memo(function TableProductRow({
             <span
               onClick={() => openAnalysis(urun)}
               className="font-bold text-[13px] text-stone-900 truncate cursor-pointer hover:text-orange-600 transition-colors leading-snug">
-              {urun.v2}
+              {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
@@ -2409,7 +2700,8 @@ const TableProductRow = React.memo(function TableProductRow({
 });
 
 
-function GrupDetailModal({ grup, onClose, getBreadcrumb, rawGrup }: any) {
+function GrupDetailModal({ grup, onClose, getBreadcrumb, rawGrup, cart, updateCart, toggleCartItem, setCart }: any) {
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
   // rawGrup: filtrelenmemiş orijinal grup, yoksa grup kullan
   const det = (rawGrup || grup).detaylar || [];
   const totalD = det.reduce((a: number, u: any) => a + (u.v20 || 0), 0);
@@ -2481,36 +2773,90 @@ function GrupDetailModal({ grup, onClose, getBreadcrumb, rawGrup }: any) {
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="border-b border-stone-200">
-                  {['Ürün', 'Hız/ay', 'Pay', 'Stok', 'Ömür'].map(h => (
-                    <th key={h} className={cn("py-1.5 font-semibold text-stone-400 text-[10px] uppercase tracking-wide", h === 'Ürün' ? 'text-left px-0' : 'text-center px-2')}>{h}</th>
+                  {['Ürün', 'Hız/ay', 'Pay', 'Stok', 'Ömür', 'Sipariş'].map(h => (
+                    <th key={h} className={cn("py-1.5 font-semibold text-stone-400 text-[10px] uppercase tracking-wide", h === 'Ürün' ? 'text-left px-0' : h === 'Sipariş' ? 'text-center px-2 w-[160px]' : 'text-center px-2')}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((u: any, i: number) => (
-                  <tr key={i} className={cn("border-b border-stone-100 hover:bg-stone-50/60", i === 0 && "bg-blue-50/20")}>
-                    <td className="py-2 pr-2">
-                      <div className="flex items-center gap-1.5">
-                        {i === 0 && <span className="w-1 h-1 rounded-full bg-blue-500 shrink-0" />}
-                        <div>
-                          <div className="font-semibold text-stone-800 text-xs truncate max-w-[220px]" title={u.v2}>{u.v2}</div>
-                          <div className="font-mono text-[9px] text-stone-400">{u.v1}</div>
+                {sorted.map((u: any, i: number) => {
+                  const qtyVal = quantities[u.v1] !== undefined
+                    ? quantities[u.v1]
+                    : (cart[u.v1]?.qty || Math.round(u.v26 || 0) + Math.round(u.v27 || 0) || 1);
+                  const inCart = cart[u.v1]?.inCart || false;
+
+                  return (
+                    <tr key={i} className={cn("border-b border-stone-100 hover:bg-stone-50/60", i === 0 && "bg-blue-50/20")}>
+                      <td className="py-2 pr-2">
+                        <div className="flex items-center gap-1.5">
+                          {i === 0 && <span className="w-1 h-1 rounded-full bg-blue-500 shrink-0" />}
+                          <div>
+                            <div className="font-semibold text-stone-800 text-xs truncate max-w-[220px]" title={u.v2}>{u.v2}</div>
+                            <div className="font-mono text-[9px] text-stone-400">{u.v1}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="py-2 px-2 text-center font-mono font-bold text-stone-700">{((u.v20 || 0) * 30).toFixed(1)}</td>
-                    <td className="py-2 px-2">
-                      <div className="flex items-center gap-1 justify-center">
-                        <div className="h-1 rounded-full bg-blue-100 overflow-hidden w-8">
-                          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${u.pay}%` }} />
+                      </td>
+                      <td className="py-2 px-2 text-center font-mono font-bold text-stone-700">{((u.v20 || 0) * 30).toFixed(1)}</td>
+                      <td className="py-2 px-2">
+                        <div className="flex items-center gap-1 justify-center">
+                          <div className="h-1 rounded-full bg-blue-100 overflow-hidden w-8">
+                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${u.pay}%` }} />
+                          </div>
+                          <span className="text-[10px] font-bold text-blue-700 min-w-[22px]">{u.pay}%</span>
                         </div>
-                        <span className="text-[10px] font-bold text-blue-700 min-w-[22px]">{u.pay}%</span>
-                      </div>
-                    </td>
-                    <td className={cn("py-2 px-2 text-center font-mono font-bold", u.v4 <= 0 ? 'text-red-500' : 'text-stone-700')}>{u.v4}</td>
-                    <td className={cn("py-2 px-2 text-center font-mono text-[11px] font-semibold", !u.omur ? 'text-red-500' : u.omur < 30 ? 'text-amber-600' : 'text-emerald-600')}>{u.omur ? `${u.omur}g` : '—'}</td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className={cn("py-2 px-2 text-center font-mono font-bold", u.v4 <= 0 ? 'text-red-500' : 'text-stone-700')}>{u.v4}</td>
+                      <td className={cn("py-2 px-2 text-center font-mono text-[11px] font-semibold", !u.omur ? 'text-red-500' : u.omur < 30 ? 'text-amber-600' : 'text-emerald-600')}>{u.omur ? `${u.omur}g` : '—'}</td>
+                      <td className="py-2 px-2 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <input
+                            type="number"
+                            value={qtyVal}
+                            onChange={e => setQuantities(prev => ({ ...prev, [u.v1]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                            className="w-11 h-6 text-center border border-stone-200 rounded font-bold font-mono text-xs outline-none focus:border-teal-500 bg-white"
+                            min="0"
+                          />
+                          <button
+                            onClick={() => {
+                              updateCart(u.v1, qtyVal, undefined, u);
+                              if (!inCart) {
+                                toggleCartItem(u.v1, u);
+                              }
+                            }}
+                            className={cn(
+                              "h-6 px-1.5 text-[9px] font-bold rounded transition-all flex items-center justify-center gap-0.5 shrink-0",
+                              inCart
+                                ? "bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100"
+                                : "bg-teal-600 text-white hover:bg-teal-700"
+                            )}
+                          >
+                            {inCart ? <Check size={8} /> : <ShoppingCart size={8} />}
+                            {inCart ? "Güncelle" : "Ekle"}
+                          </button>
+                          {inCart && (
+                            <button
+                              onClick={() => {
+                                setCart((prev: any) => ({
+                                  ...prev,
+                                  [u.v1]: {
+                                    ...prev[u.v1],
+                                    qty: 0,
+                                    mf: 0,
+                                    inCart: false
+                                  }
+                                }));
+                              }}
+                              className="h-6 w-6 border border-red-200 text-red-600 hover:bg-red-50 rounded transition-all flex items-center justify-center shrink-0"
+                              title="Sepetten Çıkar"
+                            >
+                              <Trash2 size={8} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

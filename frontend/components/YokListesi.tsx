@@ -5,6 +5,7 @@ import {
     ListX, Search, Plus, Trash2, Calendar, 
     ShoppingCart, AlertCircle, Sparkles, Building2, Package
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface OutOfStockItem {
     barcode: string;
@@ -18,10 +19,83 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
     const [items, setItems] = useState<OutOfStockItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
-    const [customName, setCustomName] = useState('');
-    const [customBarcode, setCustomBarcode] = useState('');
-    const [customNotes, setCustomNotes] = useState('');
     const [loading, setLoading] = useState(true);
+
+    const downloadXlsx = () => {
+        if (items.length === 0) return;
+        const rows = items.map(item => ({
+            'Ürün Adı': item.name,
+            'Barkod': item.barcode,
+            'Depo': item.depo,
+            'Ekleme Tarihi': new Date(item.addedAt).toLocaleDateString('tr-TR')
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 15 }, { wch: 15 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Yok Listesi');
+        XLSX.writeFile(wb, 'yok_listesi.xlsx');
+    };
+
+    const downloadPdf = () => {
+        if (items.length === 0) return;
+        const headers = ['Ürün Adı', 'Barkod', 'Depo', 'Ekleme Zamanı'];
+        const rows = items.map(item => [
+            item.name,
+            item.barcode,
+            item.depo,
+            new Date(item.addedAt).toLocaleDateString('tr-TR') + ' ' + new Date(item.addedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        ]);
+
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+
+        const html = `
+            <html>
+                <head>
+                    <title>Yok Listesi</title>
+                    <style>
+                        body { font-family: 'Inter', sans-serif; padding: 20px; color: #334155; }
+                        h1 { font-size: 20px; font-weight: 800; margin-bottom: 20px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                        th { background-color: #f8fafc; color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+                        td { padding: 12px 10px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #334155; }
+                        tr:nth-child(even) td { background-color: #fafafa; }
+                        .footer { margin-top: 30px; font-size: 10px; color: #94a3b8; text-align: right; }
+                        @media print {
+                            body { padding: 0; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <h1>Yok Listem Raporu</h1>
+                    <table>
+                        <thead>
+                            <tr>
+                                ${headers.map(h => `<th>${h}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(row => `
+                                <tr>
+                                    ${row.map(cell => `<td>${cell}</td>`).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    <div class="footer">Oluşturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}</div>
+                    <script>
+                        window.onload = function() {
+                            window.print();
+                            setTimeout(function() { window.close(); }, 500);
+                        }
+                    </script>
+                </body>
+            </html>
+        `;
+
+        printWindow.document.write(html);
+        printWindow.document.close();
+    };
 
     const [sortField, setSortField] = useState<string | null>(null);
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -142,8 +216,7 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
             barcode: item.barcode,
             name: item.name,
             depo: item.depo,
-            addedAt: new Date().toISOString(),
-            notes: customNotes.trim() || undefined
+            addedAt: new Date().toISOString()
         };
 
         const updated = [newItem, ...items];
@@ -153,39 +226,6 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
         // Reset inputs
         setSearchQuery('');
         setSearchResults([]);
-        setCustomNotes('');
-    };
-
-    const addCustomItem = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!customName.trim()) {
-            alert("Lütfen ilaç adını girin.");
-            return;
-        }
-
-        const barcode = customBarcode.trim() || `CUSTOM_${Date.now()}`;
-        
-        if (items.some(i => i.barcode === barcode)) {
-            alert("Bu barkod zaten yok listenizde kayıtlı.");
-            return;
-        }
-
-        const newItem: OutOfStockItem = {
-            barcode: barcode,
-            name: customName.trim(),
-            depo: 'Manuel Giriş',
-            addedAt: new Date().toISOString(),
-            notes: customNotes.trim() || undefined
-        };
-
-        const updated = [newItem, ...items];
-        setItems(updated);
-        saveList(updated);
-
-        // Reset
-        setCustomName('');
-        setCustomBarcode('');
-        setCustomNotes('');
     };
 
     const removeItem = (barcode: string) => {
@@ -217,9 +257,25 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
                         <p className="text-slate-500 font-medium">Bulunamayan ve sipariş verilmesi gereken ilaçlar listesi.</p>
                     </div>
                 </div>
-                <div className="bg-red-50/50 border border-red-100 rounded-2xl px-5 py-3 text-right">
-                    <span className="text-2xl font-black text-red-600 block leading-none">{items.length}</span>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 block">Eksik Kalem</span>
+                <div className="flex items-center gap-4">
+                    {items.length > 0 && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={downloadXlsx}
+                                className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-bold text-sm rounded-2xl transition-all border border-emerald-100">
+                                Excel
+                            </button>
+                            <button
+                                onClick={downloadPdf}
+                                className="flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-700 hover:bg-red-100 font-bold text-sm rounded-2xl transition-all border border-red-100">
+                                PDF
+                            </button>
+                        </div>
+                    )}
+                    <div className="bg-red-50/50 border border-red-100 rounded-2xl px-5 py-3 text-right">
+                        <span className="text-2xl font-black text-red-600 block leading-none">{items.length}</span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 block">Eksik Kalem</span>
+                    </div>
                 </div>
             </div>
 
@@ -267,46 +323,6 @@ export default function YokListesi({ data, gln }: { data: any; gln: string }) {
                         {searchQuery.trim() && searchResults.length === 0 && (
                             <p className="text-xs text-slate-400 text-center py-2 font-medium">Sonuç bulunamadı.</p>
                         )}
-                    </div>
-
-                    {/* MANUEL / CUSTOM İLAÇ EKLE */}
-                    <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm space-y-4">
-                        <h3 className="font-black text-slate-800 text-lg leading-tight flex items-center gap-2">
-                            <Plus size={18} className="text-red-500" />
-                            Yeni İlaç Ekle (Manuel)
-                        </h3>
-                        <p className="text-xs text-slate-400 font-medium">Veritabanında olmayan yeni veya özel bir ilaç ekleyin.</p>
-                        
-                        <form onSubmit={addCustomItem} className="space-y-3">
-                            <input 
-                                type="text"
-                                placeholder="İlaç Adı (Zorunlu)"
-                                value={customName}
-                                onChange={(e) => setCustomName(e.target.value)}
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:bg-white transition-all"
-                                required
-                            />
-                            <input 
-                                type="text"
-                                placeholder="Barkod (İsteğe Bağlı)"
-                                value={customBarcode}
-                                onChange={(e) => setCustomBarcode(e.target.value)}
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:bg-white transition-all"
-                            />
-                            <input 
-                                type="text"
-                                placeholder="Notlar (Örn: Hastaya sözü var, 2 adet)"
-                                value={customNotes}
-                                onChange={(e) => setCustomNotes(e.target.value)}
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:bg-white transition-all"
-                            />
-                            <button 
-                                type="submit"
-                                className="w-full py-3 bg-red-500 text-white rounded-2xl font-bold text-xs hover:bg-red-600 transition-colors shadow-lg shadow-red-100"
-                            >
-                                Listeye Ekle
-                            </button>
-                        </form>
                     </div>
                 </div>
 

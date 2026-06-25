@@ -35,6 +35,10 @@ export default function CategoryManager() {
   const [categoryProducts, setCategoryProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   
+  // Bulk Barcode State
+  const [bulkText, setBulkText] = useState("");
+  const [processingBulk, setProcessingBulk] = useState(false);
+
   // Status Messages
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -220,6 +224,34 @@ export default function CategoryManager() {
     } else {
       showError(res.message || "Ürün kategoriden çıkarılamadı");
     }
+  };
+
+  const handleBulkAssign = async () => {
+    if (selectedCategoryId === null) {
+      showError("Lütfen önce sol taraftan bir hedef kategori seçin.");
+      return;
+    }
+    if (!bulkText.trim()) {
+      showError("Lütfen barkod listesini girin.");
+      return;
+    }
+    
+    const barcodes = bulkText.split(/[\n,; \t]+/).map(b => b.trim()).filter(b => b.length > 0);
+    if (barcodes.length === 0) {
+      showError("Geçerli barkod bulunamadı.");
+      return;
+    }
+    
+    setProcessingBulk(true);
+    const res = await runAction("assign-bulk", { barcodes, category_id: selectedCategoryId });
+    if (res.status === "success") {
+      showSuccess(res.message || `${barcodes.length} adet barkod kategoriye eklendi.`);
+      setBulkText("");
+      await loadCategoryProducts();
+    } else {
+      showError(res.message || "Toplu ekleme sırasında hata oluştu.");
+    }
+    setProcessingBulk(false);
   };
 
   // Helper to build hierarchy tree representation
@@ -537,6 +569,35 @@ export default function CategoryManager() {
             {productQuery && searchResults.length === 0 && !searching && (
               <div className="text-center py-6 text-slate-400 text-sm">Hiçbir ürün bulunamadı.</div>
             )}
+          </div>
+
+          {/* Section: Bulk Barcode Add */}
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Toplu Barkod Ekleme</h3>
+              <p className="text-slate-400 font-medium text-xs">Seçili kategoriye birden fazla barkodu toplu olarak atayın. Barkodları virgül, boşluk veya satır başıyla ayırarak yazabilirsiniz.</p>
+            </div>
+            
+            <div className="space-y-3">
+              <textarea
+                value={bulkText}
+                onChange={e => setBulkText(e.target.value)}
+                placeholder="Örn:&#10;8699123456789&#10;8699987654321&#10;8699222333444"
+                className="w-full h-32 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm font-mono resize-none transition-all"
+                disabled={selectedCategoryId === null || processingBulk}
+              />
+              <button
+                onClick={handleBulkAssign}
+                disabled={selectedCategoryId === null || processingBulk || !bulkText.trim()}
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {processingBulk ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />} 
+                {selectedCategoryId === null 
+                  ? "Kategori Seçin" 
+                  : `'${selectedCategoryName}' Kategorisine Toplu Ekle`
+                }
+              </button>
+            </div>
           </div>
 
         </div>
