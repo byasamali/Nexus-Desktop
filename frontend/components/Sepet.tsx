@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@supabase/supabase-js';
 import { Trash2, Package, Upload, Download, Copy, Check, Cloud, CloudOff, Loader2, Search, X, FileUp } from 'lucide-react';
@@ -104,7 +104,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
     const [importText, setImportText] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const productMap = React.useMemo(() => {
+    const productMap = useMemo(() => {
         const map: Record<string, any> = {};
         if (data?.gruplar) {
             data.gruplar.forEach((g: any) => {
