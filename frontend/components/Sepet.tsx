@@ -442,7 +442,15 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                     {filteredItems.flatMap((item) => {
                                         const isExpanded = expandedBarkod === item.barkod;
                                         const mfHistory = getCombinedMfHistory(item.barkod, item.v95, localOrders);
-                                        const baremler = Array.isArray(item.mf_baremleri) ? item.mf_baremleri : [];
+                                        const rawBaremler = Array.isArray(item.mf_baremleri) ? item.mf_baremleri : [];
+                                        const seen = new Set<string>();
+                                        const baremler = rawBaremler.filter((b: any) => {
+                                            if (!b || b.mf === 0 || b.ana === 0) return false;
+                                            const key = `${b.ana}+${b.mf}`;
+                                            if (seen.has(key)) return false;
+                                            seen.add(key);
+                                            return true;
+                                        });
                                         return [
                                             <tr key={item.barkod} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors group ${isExpanded ? 'bg-stone-50' : ''}`}>
                                                 <td className="px-2 md:px-4 py-2 md:py-3">
@@ -457,15 +465,13 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                     onClick={() => setExpandedBarkod(isExpanded ? null : item.barkod)}
                                                     className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900 cursor-pointer hover:text-teal-600 select-none"
                                                 >
-                                                    <div className="flex flex-col gap-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <span>{item.ad}</span>
-                                                            <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
-                                                                MF ({mfHistory.length})
-                                                            </span>
-                                                        </div>
+                                                    <div className="flex items-center flex-wrap gap-2">
+                                                        <span>{item.ad}</span>
+                                                        <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
+                                                            MF ({mfHistory.length})
+                                                        </span>
                                                         {baremler.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-1.5" onClick={(e) => e.stopPropagation()}>
+                                                            <div className="flex flex-wrap gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
                                                                 {baremler.map((b: any, bi: number) => (
                                                                     <button
                                                                         key={bi}

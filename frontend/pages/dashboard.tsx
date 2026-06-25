@@ -2723,6 +2723,7 @@ const TableProductRow = React.memo(function TableProductRow({
   const [period, setPeriod] = useState<number | string>(30);
   const [opt, setOpt] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [customQty, setCustomQty] = useState<number | null>(null);
 
   const { inCart } = itemCart;
   const isSel = selectedBarkods?.has(urun.v1);
@@ -2778,51 +2779,73 @@ const TableProductRow = React.memo(function TableProductRow({
 
       {/* Ürün Bilgisi */}
       <td className="px-3 py-4 align-middle">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span
-              onClick={() => openAnalysis(urun)}
-              className="font-bold text-[13px] text-stone-900 truncate cursor-pointer hover:text-orange-600 transition-colors leading-snug">
-              {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
-            </span>
+        <div className="flex items-center justify-between gap-4 w-full">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                onClick={() => openAnalysis(urun)}
+                className="font-bold text-[13px] text-stone-900 truncate cursor-pointer hover:text-orange-600 transition-colors leading-snug">
+                {urun.v2} <span className="text-stone-600 font-bold text-xs">(Stok: {urun.v4})</span>
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              <button onClick={() => copyFn(urun.v1)}
+                className="font-mono text-[10px] text-stone-400 hover:text-teal-600 bg-stone-50 px-2 py-0.5 rounded border border-stone-200 transition-colors flex items-center gap-1">
+                {copiedId === urun.v1 ? <><Check size={8} /> Kopyalandı</> : <><Copy size={8} /> {urun.v1}</>}
+              </button>
+
+              <button onClick={() => onEditCategory && onEditCategory(urun)}
+                className="p-1 hover:text-blue-600 bg-white hover:bg-blue-50 text-stone-400 rounded border border-stone-200 hover:border-blue-200 transition-colors flex items-center justify-center shrink-0"
+                title="Kategoriyi Düzenle">
+                <Layers size={11} />
+              </button>
+
+              <button onClick={() => onAddToYokListesi && onAddToYokListesi(urun)}
+                className="p-1 hover:text-rose-600 bg-white hover:bg-rose-50 text-stone-400 rounded border border-stone-200 hover:border-rose-200 transition-colors flex items-center justify-center shrink-0"
+                title="Yok Listesine Ekle">
+                <ListX size={11} />
+              </button>
+
+              <button onClick={() => onEditProductDetails && onEditProductDetails(urun)}
+                className="p-1 hover:text-indigo-600 bg-white hover:bg-indigo-50 text-stone-400 rounded border border-stone-200 hover:border-indigo-200 transition-colors flex items-center justify-center shrink-0"
+                title="İlaç Bilgilerini Düzenle (master_db)">
+                <Settings size={11} />
+              </button>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 mt-1.5">
-            <button onClick={() => copyFn(urun.v1)}
-              className="font-mono text-[10px] text-stone-400 hover:text-teal-600 bg-stone-50 px-2 py-0.5 rounded border border-stone-200 transition-colors flex items-center gap-1">
-              {copiedId === urun.v1 ? <><Check size={8} /> Kopyalandı</> : <><Copy size={8} /> {urun.v1}</>}
-            </button>
-            
-            <button onClick={() => {
-              const qtyVal = need > 0 ? need : 1;
-              updateCart(urun.v1, qtyVal, undefined, urun);
-              if (!inCart) {
-                toggleCartItem(urun.v1, urun);
-              }
-            }}
-              className={cn("flex items-center gap-1 px-2 py-0.5 rounded border transition-all text-[10px] font-bold",
+
+          {/* Sağ Taraf: Adet Kutusu ve Sepet Butonu */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <input
+              type="number"
+              value={customQty !== null ? customQty : (inCart ? itemCart.qty : (need > 0 ? need : 1))}
+              onChange={(e) => {
+                const val = Math.max(0, parseInt(e.target.value) || 0);
+                setCustomQty(val);
+                if (inCart) {
+                  updateCart(urun.v1, val, undefined, urun);
+                }
+              }}
+              className="w-12 h-8 text-center border border-stone-200 rounded-lg font-bold font-mono text-xs outline-none focus:border-teal-500 bg-white"
+              min="0"
+            />
+            <button 
+              onClick={() => {
+                const qtyVal = customQty !== null ? customQty : (need > 0 ? need : 1);
+                updateCart(urun.v1, qtyVal, undefined, urun);
+                if (!inCart) {
+                  toggleCartItem(urun.v1, urun);
+                }
+              }}
+              className={cn(
+                "h-8 w-12 rounded-lg border transition-all flex items-center justify-center font-bold",
                 inCart 
-                  ? "bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100" 
-                  : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50 hover:border-stone-300"
-              )}>
-              <ShoppingCart size={10} /> {inCart ? `Sepette (${itemCart.qty} Adet)` : `Sepete Ekle (${need > 0 ? need : 1} Adet)`}
-            </button>
-
-            <button onClick={() => onEditCategory && onEditCategory(urun)}
-              className="p-1 hover:text-blue-600 bg-white hover:bg-blue-50 text-stone-400 rounded border border-stone-200 hover:border-blue-200 transition-colors flex items-center justify-center shrink-0"
-              title="Kategoriyi Düzenle">
-              <Layers size={11} />
-            </button>
-
-            <button onClick={() => onAddToYokListesi && onAddToYokListesi(urun)}
-              className="p-1 hover:text-rose-600 bg-white hover:bg-rose-50 text-stone-400 rounded border border-stone-200 hover:border-rose-200 transition-colors flex items-center justify-center shrink-0"
-              title="Yok Listesine Ekle">
-              <ListX size={11} />
-            </button>
-
-            <button onClick={() => onEditProductDetails && onEditProductDetails(urun)}
-              className="p-1 hover:text-indigo-600 bg-white hover:bg-indigo-50 text-stone-400 rounded border border-stone-200 hover:border-indigo-200 transition-colors flex items-center justify-center shrink-0"
-              title="İlaç Bilgilerini Düzenle (master_db)">
-              <Settings size={11} />
+                  ? "bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700" 
+                  : "bg-teal-600 border-teal-600 text-white hover:bg-teal-700 hover:scale-105 active:scale-95 shadow-sm"
+              )}
+              title={inCart ? `Sepette (${itemCart.qty} Adet)` : `Sepete Ekle`}
+            >
+              {inCart ? <Check size={16} /> : <ShoppingCart size={14} />}
             </button>
           </div>
         </div>
