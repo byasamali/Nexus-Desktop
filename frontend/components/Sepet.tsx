@@ -19,6 +19,8 @@ type CartItem = {
     depo: string;
     qty: number;
     mf: number;
+    v95?: string;
+    mf_baremleri?: any[];
 };
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -112,7 +114,8 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
             depo: val.depo || 'Depo Belirsiz',
             qty: val.qty,
             mf: val.mf || 0,
-            v95: val.v95 || ''
+            v95: val.v95 || '',
+            mf_baremleri: val.mf_baremleri || []
         }));
 
     // --- YÜKLEME: Supabase'den sadece eczaneId (User ID) çek (Import için gerekebilir) ---
@@ -430,7 +433,6 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                         </th>
                                         <th className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Ürün</th>
                                         <th className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Barkod</th>
-                                        <th className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Depo</th>
                                         <th className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Adet</th>
                                         <th className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">MF</th>
                                         <th className="px-2 md:px-4 py-2 md:py-3 text-right text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">İşlem</th>
@@ -440,6 +442,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                     {filteredItems.flatMap((item) => {
                                         const isExpanded = expandedBarkod === item.barkod;
                                         const mfHistory = getCombinedMfHistory(item.barkod, item.v95, localOrders);
+                                        const baremler = Array.isArray(item.mf_baremleri) ? item.mf_baremleri : [];
                                         return [
                                             <tr key={item.barkod} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors group ${isExpanded ? 'bg-stone-50' : ''}`}>
                                                 <td className="px-2 md:px-4 py-2 md:py-3">
@@ -454,15 +457,33 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                     onClick={() => setExpandedBarkod(isExpanded ? null : item.barkod)}
                                                     className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900 cursor-pointer hover:text-teal-600 select-none"
                                                 >
-                                                    <div className="flex items-center gap-2">
-                                                        <span>{item.ad}</span>
-                                                        <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
-                                                            MF ({mfHistory.length})
-                                                        </span>
+                                                    <div className="flex flex-col gap-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <span>{item.ad}</span>
+                                                            <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
+                                                                MF ({mfHistory.length})
+                                                            </span>
+                                                        </div>
+                                                        {baremler.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 mt-1.5" onClick={(e) => e.stopPropagation()}>
+                                                                {baremler.map((b: any, bi: number) => (
+                                                                    <button
+                                                                        key={bi}
+                                                                        onClick={() => {
+                                                                            const updated = items.map(i => i.barkod === item.barkod ? { ...i, qty: b.ana, mf: b.mf } : i);
+                                                                            persistItems(updated);
+                                                                        }}
+                                                                        className="bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold font-mono text-[9px] px-1.5 py-0.5 rounded border border-teal-200 hover:border-teal-300 hover:scale-105 active:scale-95 transition-all shadow-sm"
+                                                                        title={`${b.ana} adet alıma ${b.mf} mf`}
+                                                                    >
+                                                                        {b.ana}+{b.mf}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-mono text-stone-600">{item.barkod}</td>
-                                                <td className="px-2 md:px-4 py-2 md:py-3 text-center text-xs md:text-sm text-stone-600">{item.depo}</td>
                                                 <td className="px-2 md:px-4 py-2 md:py-3 text-center">
                                                     <input
                                                         type="number"
@@ -498,7 +519,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                             </tr>,
                                             isExpanded && (
                                                 <tr key={`${item.barkod}-expanded`} className="bg-stone-50/50">
-                                                    <td colSpan={7} className="px-4 py-3 border-b border-stone-100">
+                                                    <td colSpan={6} className="px-4 py-3 border-b border-stone-100">
                                                         <div className="pl-8 pr-4 py-2 max-w-xl">
                                                             <h4 className="text-[11px] font-black text-stone-500 uppercase tracking-wider mb-2">📦 {item.ad} — Son 6 Aylık MF Geçmişi</h4>
                                                             {mfHistory.length === 0 ? (

@@ -999,19 +999,62 @@ export default function OrderCockpit() {
     } catch (err) { console.error('Kopyalama hatası:', err); }
   };
 
+  const addToReturnsList = async (barkod: string, ad: string, adet: number) => {
+    try {
+      const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
+      const gln = data?.gln || 'local';
+      let currentList: any[] = [];
+
+      if (isWails) {
+        const content = await (window as any).go.main.App.LoadLocalJSON(gln, "iade_listesi.json");
+        if (content && content !== '{}') {
+          currentList = JSON.parse(content);
+        }
+      } else {
+        const cached = localStorage.getItem(`iade_listesi_${gln}`);
+        if (cached) {
+          currentList = JSON.parse(cached);
+        }
+      }
+
+      if (!Array.isArray(currentList)) {
+        currentList = [];
+      }
+
+      const existingIdx = currentList.findIndex((i: any) => i.barkod === barkod);
+      if (existingIdx > -1) {
+        currentList[existingIdx].adet = (currentList[existingIdx].adet || 0) + adet;
+      } else {
+        currentList.push({ barkod, ad, adet });
+      }
+
+      if (isWails) {
+        await (window as any).go.main.App.SaveLocalJSON(gln, "iade_listesi.json", JSON.stringify(currentList));
+      } else {
+        localStorage.setItem(`iade_listesi_${gln}`, JSON.stringify(currentList));
+      }
+
+      window.dispatchEvent(new CustomEvent('nexus:iadeListesiUpdated'));
+      return true;
+    } catch (err) {
+      console.error("İadeye eklenirken hata oluştu:", err);
+      return false;
+    }
+  };
+
   const updateCart = (barkod: string, qty: number, manualMf?: number, urun?: any) => {
     setCart(prev => {
       let finalMf = manualMf;
       if (manualMf === undefined && urun) finalMf = calculateAutoMF(qty, urun.mf_baremleri);
       const existing = prev[barkod] || { qty: 0, mf: 0, inCart: false, ad: "Bilinmeyen Ürün", depo: "Depo Belirsiz" };
-      return { ...prev, [barkod]: { ...existing, qty, mf: finalMf || 0, ad: urun?.v2 || existing.ad, depo: urun?.v91 || existing.depo, v95: urun?.v95 || existing.v95 } };
+      return { ...prev, [barkod]: { ...existing, qty, mf: finalMf || 0, ad: urun?.v2 || existing.ad, depo: urun?.v91 || existing.depo, v95: urun?.v95 || existing.v95, mf_baremleri: urun?.mf_baremleri || existing.mf_baremleri } };
     });
   };
 
   const toggleCartItem = (barkod: string, urun: any) => {
     setCart(prev => {
       const existing = prev[barkod] || { qty: 0, mf: 0, inCart: false, ad: urun.v2, depo: urun.v91 };
-      return { ...prev, [barkod]: { ...existing, inCart: !existing.inCart, v95: urun.v95 || existing.v95 } };
+      return { ...prev, [barkod]: { ...existing, inCart: !existing.inCart, v95: urun.v95 || existing.v95, mf_baremleri: urun.mf_baremleri || existing.mf_baremleri } };
     });
   };
 
@@ -1030,7 +1073,9 @@ export default function OrderCockpit() {
           mf: item.mf,
           inCart: true,
           ad: item.ad || existing?.ad || 'Bilinmeyen Ürün',
-          depo: item.depo || existing?.depo || 'Depo Belirsiz'
+          depo: item.depo || existing?.depo || 'Depo Belirsiz',
+          v95: item.v95 || existing?.v95,
+          mf_baremleri: item.mf_baremleri || existing?.mf_baremleri
         };
       });
       return nextCart;
@@ -1615,19 +1660,19 @@ export default function OrderCockpit() {
                             <colgroup>
                               <col style={{ width: '45px' }} /> {/* Checkbox ve Çizgi Kolonu */}
                               <col /> {/* Ürün Bilgisi */}
-                              <col style={{ width: '180px' }} /> {/* Tahmini Satış */}
+                              {/* <col style={{ width: '180px' }} /> */} {/* Tahmini Satış */}
                               <col style={{ width: '56px' }} />
-                              <col style={{ width: '56px' }} />
-                              <col style={{ width: '68px' }} />
+                              {/* <col style={{ width: '56px' }} /> */}
+                              {/* <col style={{ width: '68px' }} /> */}
                             </colgroup>
                             <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
                               <tr>
                                 <th className="py-4"></th>
                                 <th className="py-4 px-3 text-left font-semibold text-stone-400 text-[10px] uppercase tracking-widest">Ürün Bilgisi</th>
-                                <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Tahmini Satış</th>
+                                {/* <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Tahmini Satış</th> */}
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Hız/ay</th>
-                                <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Stok</th>
-                                <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">İHT</th>
+                                {/* <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Stok</th> */}
+                                {/* <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">İHT</th> */}
                               </tr>
                             </thead>
                             <tbody>
@@ -1651,6 +1696,7 @@ export default function OrderCockpit() {
                                   onEditCategory={setEditingCategoryProduct}
                                   onAddToYokListesi={handleAddToYokListesi}
                                   onEditProductDetails={setEditingDbProduct}
+                                  selectedDaysLimit={selectedDaysLimit}
                                 />
                               ))}
                             </tbody>
@@ -1699,8 +1745,8 @@ export default function OrderCockpit() {
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}
-                {activeTab === 'os' && <DeadStockReport data={data?.olu_stok_listesi || []} gln={data?.gln || 'local'} />}
-                {activeTab === 'mr' && <ExpiryReport data={data?.miad_risk_listesi || []} />}
+                {activeTab === 'os' && <DeadStockReport data={data?.olu_stok_listesi || []} gln={data?.gln || 'local'} addToReturns={addToReturnsList} />}
+                {activeTab === 'mr' && <ExpiryReport data={data?.miad_risk_listesi || []} addToReturns={addToReturnsList} />}
                 {activeTab === 'st' && <OutOfStockReport data={data?.stok_sifir_listesi || []} />}
                 {activeTab === 'ayarlar' && <AyarlarPage supabase={supabase} />}
                 {activeTab === 'kategori_yonetimi' && <CategoryManager />}
@@ -1914,10 +1960,10 @@ export default function OrderCockpit() {
                       <colgroup>
                         <col style={{ width: '40px' }} />
                         <col />
-                        <col style={{ width: '180px' }} />
+                        {/* <col style={{ width: '180px' }} /> */}
                         <col style={{ width: '56px' }} />
-                        <col style={{ width: '56px' }} />
-                        <col style={{ width: '68px' }} />
+                        {/* <col style={{ width: '56px' }} /> */}
+                        {/* <col style={{ width: '68px' }} /> */}
                         <col style={{ width: '36px' }} />
                       </colgroup>
                       <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
@@ -1930,7 +1976,7 @@ export default function OrderCockpit() {
                               if (label === 'İHT') return 'iht';
                               return null;
                             };
-                            return [['', ''], ['Ürün Bilgisi', 'left'], ['Tahmini Satış', ''], ['Hız/ay', ''], ['Stok', ''], ['İHT', ''], ['', '']].map(([h, align], i) => {
+                            return [['', ''], ['Ürün Bilgisi', 'left'], ['Hız/ay', ''], ['', '']].map(([h, align], i) => {
                               const sortKey = getHeaderSortKey(h);
                               return (
                                 <th 
@@ -1957,7 +2003,7 @@ export default function OrderCockpit() {
                             toggleCartItem={toggleCartItem} copyFn={copyToClipboard} copiedId={copiedBarkod}
                             openAnalysis={setSelectedAnalysis} activeMenu={activeMenu} setActiveMenu={setActiveMenu}
                             onIgnore={handleIgnore} selectedBarkods={selectedBarkods} setSelectedBarkods={setSelectedBarkods}
-                            onGrupDetail={setSelectedGrup} />
+                            onGrupDetail={setSelectedGrup} selectedDaysLimit={selectedDaysLimit} />
                         ))}
                       </tbody>
                     </table>
@@ -2580,7 +2626,7 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
   );
 }
 
-function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails }: any) {
+function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit }: any) {
   const [isOpen, setIsOpen] = useState(true);
   const originalCount = grup.original_count ?? grup.detaylar.length;
   const isSingle = originalCount === 1;
@@ -2591,7 +2637,7 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
   const omurGun = totalDailySpeed > 0 && totalStock > 0 ? Math.round(totalStock / totalDailySpeed) : null;
   const grupBaslik = (grup.lider_adi || '').split(' ')[0] + ' GRUBU';
 
-  const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails };
+  const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit };
 
   return (
     <>
@@ -2602,7 +2648,7 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
             {/* Dikey çizgi başlangıcı (Ağaç yapısı için) */}
             {isOpen && <div className="absolute left-1/2 bottom-0 w-px h-1/2 bg-orange-300 -translate-x-1/2" />}
           </td>
-          <td className="px-3 py-2" colSpan={5}>
+          <td className="px-3 py-2" colSpan={2}>
             <div className="flex items-center justify-between">
               {/* Sol Taraf: Rozet + Analiz Butonu + İstatistikler */}
               <div className="flex items-center gap-2">
@@ -2642,7 +2688,7 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
             </div>
           </td>
           {/* Boş hücreler (Tablo yapısını korumak için) */}
-          <td className="pr-4"></td>
+          {/* <td className="pr-4"></td> */}
         </tr>
       )}
 
@@ -2672,7 +2718,7 @@ const PERIODS = [
 const TableProductRow = React.memo(function TableProductRow({
   urun, itemCart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis,
   selectedBarkods, setSelectedBarkods, isGrouped, isLastChild, showTree,
-  onEditCategory, onAddToYokListesi, onEditProductDetails
+  onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit
 }: any) {
   const [period, setPeriod] = useState<number | string>(30);
   const [opt, setOpt] = useState<string | null>(null);
@@ -2691,7 +2737,8 @@ const TableProductRow = React.memo(function TableProductRow({
     }
     return period as number;
   };
-  const need = Math.round(Math.max(0, spd * periodDays() - stk));
+  const activeDays = selectedDaysLimit !== null ? selectedDaysLimit : periodDays();
+  const need = Math.round(Math.max(0, spd * activeDays - stk));
   const onr = Math.round(urun.v26 || 0) + Math.round(urun.v27 || 0);
 
   const toggleSel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2746,15 +2793,18 @@ const TableProductRow = React.memo(function TableProductRow({
             </button>
             
             <button onClick={() => {
-              updateCart(urun.v1, need, undefined, urun);
-              toggleCartItem(urun.v1, urun);
+              const qtyVal = need > 0 ? need : 1;
+              updateCart(urun.v1, qtyVal, undefined, urun);
+              if (!inCart) {
+                toggleCartItem(urun.v1, urun);
+              }
             }}
               className={cn("flex items-center gap-1 px-2 py-0.5 rounded border transition-all text-[10px] font-bold",
                 inCart 
                   ? "bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100" 
                   : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50 hover:border-stone-300"
               )}>
-              <ShoppingCart size={10} /> {inCart ? "Sepette" : "Sepete Ekle"}
+              <ShoppingCart size={10} /> {inCart ? `Sepette (${itemCart.qty} Adet)` : `Sepete Ekle (${need > 0 ? need : 1} Adet)`}
             </button>
 
             <button onClick={() => onEditCategory && onEditCategory(urun)}
@@ -2778,7 +2828,7 @@ const TableProductRow = React.memo(function TableProductRow({
         </div>
       </td>
 
-      {/* Tahmini Satış (Period Seçici) */}
+      {/* Tahmini Satış (Period Seçici) - YORUM SATIRI
       <td className="px-2 py-4 align-middle hidden sm:table-cell">
         <div className="flex items-center justify-center gap-0.5">
           {PERIODS.map(p => {
@@ -2796,13 +2846,19 @@ const TableProductRow = React.memo(function TableProductRow({
           })}
         </div>
       </td>
+      */}
 
       <td className="px-3 py-4 text-center align-middle hidden sm:table-cell">
         <span className="text-[12px] font-mono font-bold text-stone-700">{spd30.toFixed(1)}</span>
       </td>
+
+      {/* Stok - YORUM SATIRI
       <td className="px-3 py-4 text-center align-middle hidden sm:table-cell">
         <span className={cn("text-[12px] font-black font-mono", stk <= 0 ? "text-red-500" : "text-stone-900")}>{stk}</span>
       </td>
+      */}
+
+      {/* İHT - YORUM SATIRI
       <td className="px-2 py-4 align-middle hidden sm:table-cell">
         <button onClick={() => setOpt(opt === 'need' ? null : 'need')}
           className={cn("w-full py-1 text-sm font-black rounded font-mono border-2 transition-all",
@@ -2810,6 +2866,7 @@ const TableProductRow = React.memo(function TableProductRow({
           {need}
         </button>
       </td>
+      */}
     </tr>
   );
 }, (prev, next) => {
@@ -2819,7 +2876,8 @@ const TableProductRow = React.memo(function TableProductRow({
     prev.urun.kategori_id === next.urun.kategori_id &&
     prev.urun.v2 === next.urun.v2 &&
     prev.showTree === next.showTree &&
-    prev.isLastChild === next.isLastChild;
+    prev.isLastChild === next.isLastChild &&
+    prev.selectedDaysLimit === next.selectedDaysLimit;
 });
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { AlertTriangle, Search, CalendarClock } from 'lucide-react';
+import { AlertTriangle, Search, CalendarClock, Check, RefreshCw } from 'lucide-react';
 
 function parseMiadStr(raw: string | undefined | null): string {
     if (!raw) return 'Belirsiz';
@@ -24,8 +24,14 @@ function parseMiadStr(raw: string | undefined | null): string {
     return str;
 }
 
-export default function ExpiryReport({ data }: { data: any[] }) {
+interface ExpiryReportProps {
+    data: any[];
+    addToReturns?: (barkod: string, ad: string, adet: number) => Promise<boolean>;
+}
+
+export default function ExpiryReport({ data, addToReturns }: ExpiryReportProps) {
     const [search, setSearch] = useState("");
+    const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
 
     const activeData = data?.filter(item => item.stok > 0) || [];
 
@@ -33,6 +39,17 @@ export default function ExpiryReport({ data }: { data: any[] }) {
         item.ad?.toLowerCase().includes(search.toLowerCase()) ||
         item.barkod?.includes(search)
     );
+
+    const handleAdd = async (item: any) => {
+        if (!addToReturns) return;
+        const ok = await addToReturns(item.barkod, item.ad, item.stok);
+        if (ok) {
+            setAddedItems(prev => ({ ...prev, [item.barkod]: true }));
+            setTimeout(() => {
+                setAddedItems(prev => ({ ...prev, [item.barkod]: false }));
+            }, 2000);
+        }
+    };
 
     if (!activeData || activeData.length === 0) return (
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-[2rem] border-2 border-dashed border-emerald-100">
@@ -74,15 +91,43 @@ export default function ExpiryReport({ data }: { data: any[] }) {
                                 <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Stok</th>
                                 <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Son Kullanma</th>
                                 <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Mali Değer</th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px]">İşlem</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {filteredData.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-orange-50/10 transition-colors group">
-                                    <td className="px-8 py-5 font-bold text-slate-700">{item.ad}</td>
+                                    <td className="px-8 py-5">
+                                        <div>
+                                            <div className="font-bold text-slate-700">{item.ad}</div>
+                                            <div className="text-[10px] font-mono text-slate-400 mt-0.5">{item.barkod}</div>
+                                        </div>
+                                    </td>
                                     <td className="px-8 py-5"><span className="font-bold text-slate-600">{item.stok}</span></td>
                                     <td className="px-8 py-5"><span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg font-black text-xs">{parseMiadStr(item.miad)}</span></td>
                                     <td className="px-8 py-5 text-right font-black text-slate-800">{item.tutar}</td>
+                                    <td className="px-8 py-5 text-center flex justify-center">
+                                        <button
+                                            onClick={() => handleAdd(item)}
+                                            className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                                addedItems[item.barkod]
+                                                    ? "bg-emerald-600 border-emerald-600 text-white"
+                                                    : "bg-white border-orange-200 hover:border-orange-300 text-orange-600 hover:bg-orange-50/50 active:scale-95"
+                                            }`}
+                                        >
+                                            {addedItems[item.barkod] ? (
+                                                <>
+                                                    <Check size={12} />
+                                                    Eklendi ✓
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <RefreshCw size={12} />
+                                                    İadeye Ekle
+                                                </>
+                                            )}
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>

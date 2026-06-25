@@ -1,20 +1,86 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Moon, Search, AlertCircle, PackageOpen, Copy, Check } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Moon, Search, AlertCircle, PackageOpen, Copy, Check, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-export default function DeadStockReport({ data }: { data: any[] }) {
+interface DeadStockReportProps {
+    data: any[];
+    gln: string;
+    addToReturns?: (barkod: string, ad: string, adet: number) => Promise<boolean>;
+}
+
+export default function DeadStockReport({ data, gln, addToReturns }: DeadStockReportProps) {
     const [search, setSearch] = useState("");
     const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
+    const [sortField, setSortField] = useState<string>('son_satis');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+    const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
 
-    const filteredData = data?.filter(item =>
-        item.ad?.toLowerCase().includes(search.toLowerCase()) ||
-        item.barkod?.includes(search)
-    ) || [];
+    const filteredData = useMemo(() => {
+        return (data || []).filter(item =>
+            item.ad?.toLowerCase().includes(search.toLowerCase()) ||
+            item.barkod?.includes(search)
+        );
+    }, [data, search]);
+
+    const sortedData = useMemo(() => {
+        const list = [...filteredData];
+        return list.sort((a, b) => {
+            let aVal = a[sortField];
+            let bVal = b[sortField];
+
+            if (aVal === undefined) aVal = '';
+            if (bVal === undefined) bVal = '';
+
+            if (sortField === 'deger') {
+                const parseVal = (v: any) => {
+                    if (typeof v === 'number') return v;
+                    const clean = String(v).replace(/[^\d,.-]/g, '').replace(/,/g, '.');
+                    return parseFloat(clean) || 0;
+                };
+                return sortOrder === 'asc' ? parseVal(aVal) - parseVal(bVal) : parseVal(bVal) - parseVal(aVal);
+            }
+
+            if (typeof aVal === 'string') {
+                return sortOrder === 'asc' 
+                    ? aVal.localeCompare(String(bVal), 'tr') 
+                    : String(bVal).localeCompare(aVal, 'tr');
+            }
+
+            const aNum = Number(aVal) || 0;
+            const bNum = Number(bVal) || 0;
+            return sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
+        });
+    }, [filteredData, sortField, sortOrder]);
+
+    const handleSort = (field: string) => {
+        if (sortField === field) {
+            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortOrder('desc');
+        }
+    };
+
+    const renderSortIcon = (field: string) => {
+        if (sortField !== field) return null;
+        return sortOrder === 'asc' ? ' ▲' : ' ▼';
+    };
+
+    const handleAdd = async (item: any) => {
+        if (!addToReturns) return;
+        const ok = await addToReturns(item.barkod, item.ad, item.stok);
+        if (ok) {
+            setAddedItems(prev => ({ ...prev, [item.barkod]: true }));
+            setTimeout(() => {
+                setAddedItems(prev => ({ ...prev, [item.barkod]: false }));
+            }, 2000);
+        }
+    };
 
     const downloadXlsx = () => {
-        const rows = filteredData.map(item => ({
+        const rows = sortedData.map(item => ({
             'Ürün Adı': item.ad,
             'Barkod': item.barkod,
             'Mevcut Stok': `${item.stok} Adet`,
@@ -30,7 +96,7 @@ export default function DeadStockReport({ data }: { data: any[] }) {
 
     const downloadPdf = () => {
         const headers = ['Ürün Detayı', 'Barkod', 'Mevcut Stok', 'Hareketsizlik', 'Potansiyel Kayıp'];
-        const rows = filteredData.map(item => [
+        const rows = sortedData.map(item => [
             item.ad,
             item.barkod,
             `${item.stok} Adet`,
@@ -157,15 +223,16 @@ export default function DeadStockReport({ data }: { data: any[] }) {
                     <table className="w-full text-left text-sm">
                         <thead className="bg-slate-50/50 border-b border-slate-100">
                             <tr>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün Detayı</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Barkod</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Mevcut Stok</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Hareketsizlik</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Potansiyel Kayıp</th>
+                                <th onClick={() => handleSort('ad')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Ürün Detayı{renderSortIcon('ad')}</th>
+                                <th onClick={() => handleSort('barkod')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Barkod{renderSortIcon('barkod')}</th>
+                                <th onClick={() => handleSort('stok')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Mevcut Stok{renderSortIcon('stok')}</th>
+                                <th onClick={() => handleSort('son_satis')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Hareketsizlik{renderSortIcon('son_satis')}</th>
+                                <th onClick={() => handleSort('deger')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right cursor-pointer hover:text-slate-600 select-none">Potansiyel Kayıp{renderSortIcon('deger')}</th>
+                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px] select-none">İşlem</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
-                            {filteredData.map((item, idx) => (
+                            {sortedData.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
                                     <td className="px-8 py-5">
                                         <p className="font-bold text-slate-700 group-hover:text-blue-600 transition-colors">{item.ad}</p>
@@ -191,11 +258,33 @@ export default function DeadStockReport({ data }: { data: any[] }) {
                                     <td className="px-8 py-5 text-right font-black text-slate-800">
                                         {item.deger}
                                     </td>
+                                    <td className="px-8 py-5 text-center flex justify-center">
+                                        <button
+                                            onClick={() => handleAdd(item)}
+                                            className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                                addedItems[item.barkod]
+                                                    ? "bg-emerald-600 border-emerald-600 text-white"
+                                                    : "bg-white border-slate-200 hover:border-slate-300 text-slate-600 hover:bg-slate-50 active:scale-95"
+                                            }`}
+                                        >
+                                            {addedItems[item.barkod] ? (
+                                                <>
+                                                    <Check size={12} />
+                                                    Eklendi ✓
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <RefreshCw size={12} />
+                                                    İadeye Ekle
+                                                </>
+                                            )}
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
-                    {filteredData.length === 0 && (
+                    {sortedData.length === 0 && (
                         <div className="text-center py-12 text-slate-400 font-medium">Arama sonucu bulunamadı.</div>
                     )}
                 </div>

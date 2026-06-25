@@ -14,12 +14,49 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
   const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
   const [cartQty, setCartQty] = useState<Record<string, number>>({});
   const [addedToCart, setAddedToCart] = useState<Record<string, boolean>>({});
+  const [sortField, setSortField] = useState<string>('aylik_hiz');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   const filtered = useMemo(() =>
     (data || []).filter(item =>
       item.ad?.toLowerCase().includes(search.toLowerCase()) ||
       item.barkod?.includes(search)
     ), [data, search]);
+
+  const sortedData = useMemo(() => {
+    const list = [...filtered];
+    return list.sort((a, b) => {
+      let aVal = a[sortField as keyof OutOfStockItem];
+      let bVal = b[sortField as keyof OutOfStockItem];
+
+      if (aVal === undefined) aVal = '';
+      if (bVal === undefined) bVal = '';
+
+      if (typeof aVal === 'string') {
+        return sortOrder === 'asc' 
+          ? aVal.localeCompare(String(bVal), 'tr') 
+          : String(bVal).localeCompare(aVal, 'tr');
+      }
+
+      const aNum = Number(aVal) || 0;
+      const bNum = Number(bVal) || 0;
+      return sortOrder === 'asc' ? aNum - bNum : bNum - aNum;
+    });
+  }, [filtered, sortField, sortOrder]);
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const renderSortIcon = (field: string) => {
+    if (sortField !== field) return null;
+    return sortOrder === 'asc' ? ' ▲' : ' ▼';
+  };
 
   const copyBarkod = async (barkod: string) => {
     try {
@@ -85,15 +122,15 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
               <tr>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Aylık Hız</th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Stok</th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Barkod</th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Sepete Ekle</th>
+                <th onClick={() => handleSort('ad')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Ürün{renderSortIcon('ad')}</th>
+                <th onClick={() => handleSort('aylik_hiz')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Aylık Hız{renderSortIcon('aylik_hiz')}</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] select-none">Stok</th>
+                <th onClick={() => handleSort('barkod')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Barkod{renderSortIcon('barkod')}</th>
+                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] select-none">Sepete Ekle</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filtered.map((item, idx) => (
+              {sortedData.map((item, idx) => (
                 <tr key={idx} className="hover:bg-rose-50/30 transition-colors group">
                   <td className="px-6 py-4">
                     <p className="font-bold text-slate-700 group-hover:text-rose-600 transition-colors">{item.ad}</p>
@@ -159,7 +196,7 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && (
+          {sortedData.length === 0 && (
             <div className="text-center py-12 text-slate-400 font-medium">Arama sonucu bulunamadı.</div>
           )}
         </div>

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { 
-    EyeOff, Calendar, ShoppingCart, Sparkles, Building2, Package, Check, Trash2, Download
+    EyeOff, Calendar, ShoppingCart, Sparkles, Package, Check, Trash2, Download
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { clsx, type ClassValue } from "clsx";
@@ -14,6 +14,9 @@ function cn(...inputs: ClassValue[]) {
 
 export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggleCartItem, setCart }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any }) {
     const [quantities, setQuantities] = useState<Record<string, number>>({});
+    const [sortField, setSortField] = useState<string>('daysInactive');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+    const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
 
     const gozdenKacabilenler = React.useMemo(() => {
         const list: any[] = [];
@@ -26,12 +29,11 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                 const monthlySpeed = dailySpeed * 30;
                 const daysInactive = u.v21 || 0;
                 
-                // Kriterler: Stok <= 0 VE (Hareketsizlik >= 60 gün (2 ay) VEYA Aylık Hız < 1)
+                // Kriterler: Stok <= 0 VE (Hareketsizlik >= 60 gün VEYA Aylık Hız < 1)
                 if (stock <= 0 && (daysInactive >= 60 || monthlySpeed < 1)) {
                     list.push({
                         barcode: u.v1,
                         name: u.v2,
-                        depo: u.v91 || 'DEPO_YOK',
                         daysInactive,
                         monthlySpeed,
                         rawUrun: u
@@ -40,21 +42,45 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
             });
         });
         
-        // Hareketsizlik süresine göre azalan şekilde sıralayalım (en uzun süredir satılmayanlar en üstte)
-        return list.sort((a, b) => b.daysInactive - a.daysInactive);
-    }, [data]);
+        // Sıralama mantığı
+        return list.sort((a, b) => {
+            let aVal = a[sortField];
+            let bVal = b[sortField];
+
+            if (typeof aVal === 'string') {
+                return sortOrder === 'asc' 
+                    ? aVal.localeCompare(bVal, 'tr') 
+                    : bVal.localeCompare(aVal, 'tr');
+            }
+
+            return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+        });
+    }, [data, sortField, sortOrder]);
+
+    const handleSort = (field: string) => {
+        if (sortField === field) {
+            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortOrder('desc');
+        }
+    };
+
+    const renderSortIcon = (field: string) => {
+        if (sortField !== field) return null;
+        return sortOrder === 'asc' ? ' ▲' : ' ▼';
+    };
 
     const downloadXlsx = () => {
         if (gozdenKacabilenler.length === 0) return;
         const rows = gozdenKacabilenler.map(item => ({
             'Ürün Adı': item.name,
             'Barkod': item.barcode,
-            'En Son Depo': item.depo,
             'Hareketsizlik (Gün)': item.daysInactive,
             'Aylık Satış Hızı': item.monthlySpeed.toFixed(2)
         }));
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{ wch: 45 }, { wch: 18 }, { wch: 15 }, { wch: 20 }, { wch: 18 }];
+        ws['!cols'] = [{ wch: 45 }, { wch: 18 }, { wch: 20 }, { wch: 18 }];
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Gözden Kaçanlar');
         XLSX.writeFile(wb, 'gozden_kacanlar.xlsx');
@@ -103,20 +129,20 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-slate-100 bg-slate-50/50">
-                                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none">İlaç Adı</th>
-                                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none">Barkod</th>
-                                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none">En Son Depo</th>
-                                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none">Hareketsizlik</th>
-                                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none">Aylık Hız</th>
+                                    <th onClick={() => handleSort('name')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">İlaç Adı{renderSortIcon('name')}</th>
+                                    <th onClick={() => handleSort('barcode')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">Barkod{renderSortIcon('barcode')}</th>
+                                    <th onClick={() => handleSort('daysInactive')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Hareketsizlik{renderSortIcon('daysInactive')}</th>
+                                    <th onClick={() => handleSort('monthlySpeed')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Aylık Hız{renderSortIcon('monthlySpeed')}</th>
                                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-[200px]">Sipariş</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
                                 {gozdenKacabilenler.map((item) => {
                                     const u = item.rawUrun;
+                                    const rawVal = (u.v26 || 0) + (u.v27 || 0);
                                     const qtyVal = quantities[u.v1] !== undefined
                                         ? quantities[u.v1]
-                                        : (cart[u.v1]?.qty || Math.round(u.v26 || 0) + Math.round(u.v27 || 0) || 1);
+                                        : (cart[u.v1]?.qty || Math.ceil(rawVal) || 1);
                                     const inCart = cart[u.v1]?.inCart || false;
 
                                     return (
@@ -129,12 +155,24 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                                     <p className="text-xs font-bold text-slate-800 truncate max-w-[280px]" title={item.name}>{item.name}</p>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 text-xs font-mono text-slate-500">{item.barcode}</td>
-                                            <td className="px-6 py-4 text-xs font-bold text-slate-600">
-                                                <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-lg border border-slate-200">
-                                                    <Building2 size={12} className="text-slate-400" />
-                                                    {item.depo}
-                                                </span>
+                                            <td className="px-6 py-4 text-xs font-mono text-slate-500">
+                                                <button
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(item.barcode);
+                                                        setCopiedBarkod(item.barcode);
+                                                        setTimeout(() => setCopiedBarkod(null), 1500);
+                                                    }}
+                                                    className="hover:text-teal-600 transition-colors flex items-center gap-1 font-mono text-xs"
+                                                    title="Tıkla ve Kopyala"
+                                                >
+                                                    {copiedBarkod === item.barcode ? (
+                                                        <span className="text-[10px] text-teal-600 font-bold bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
+                                                            Kopyalandı
+                                                        </span>
+                                                    ) : (
+                                                        item.barcode
+                                                    )}
+                                                </button>
                                             </td>
                                             <td className="px-6 py-4 text-xs text-center font-bold text-slate-600">
                                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 text-red-600 rounded-full border border-red-100">
