@@ -3347,21 +3347,11 @@ function AyarlarPage({ supabase }: { supabase: any }) {
               <label className="text-[10px] font-black text-stone-400 uppercase tracking-wide">Eczane Otomasyon Programı</label>
               <select
                 value={localSettings.software}
-                onChange={e => {
-                  const val = e.target.value;
-                  setLocalSettings(prev => {
-                    const next = { ...prev, software: val };
-                    if (val === "Botanik") {
-                      next.server_instance = ".\\BOTANIKSQL";
-                      next.database = "eczane";
-                    }
-                    return next;
-                  });
-                }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-medium text-slate-800"
+                onChange={e => setLocalSettings(prev => ({ ...prev, software: e.target.value }))}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-medium text-slate-800 disabled:opacity-85"
+                disabled
               >
                 <option value="Botanik">Botanik</option>
-                <option value="Farmakom">Farmakom</option>
               </select>
             </div>
 
@@ -3900,21 +3890,11 @@ function WailsSetupView({ onSetupComplete }: { onSetupComplete: (data: any) => v
             <label className="text-[10px] font-black text-stone-400 uppercase tracking-wider">Eczane Programı</label>
             <select
               value={software}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSoftware(val);
-                if (val === 'Botanik') {
-                  setServerInstance('.\\BOTANIKSQL');
-                  setDatabaseName('eczane');
-                } else if (val === 'Farmakom') {
-                  setServerInstance('');
-                  setDatabaseName('');
-                }
-              }}
-              className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-stone-50 text-sm font-semibold text-stone-800 focus:outline-none focus:border-teal-500 focus:bg-white transition-all"
+              onChange={(e) => setSoftware(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl border border-stone-200 bg-stone-50 text-sm font-semibold text-stone-800 focus:outline-none focus:border-teal-500 focus:bg-white transition-all disabled:opacity-85"
+              disabled
             >
               <option value="Botanik">Botanik SQL</option>
-              <option value="Farmakom">Farmakom SQL</option>
             </select>
           </div>
 
