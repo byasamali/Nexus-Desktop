@@ -38,6 +38,7 @@ interface SepetPageProps {
     setActiveTab: (tab: string) => void;
     gln: string;
     localOrders: any[];
+    data?: any;
 }
 
 const getCombinedMfHistory = (barcode: string, alimStr: string, localOrders: any[]) => {
@@ -92,7 +93,7 @@ const getCombinedMfHistory = (barcode: string, alimStr: string, localOrders: any
   return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 };
 
-export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders }: SepetPageProps) {
+export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders, data }: SepetPageProps) {
     const [expandedBarkod, setExpandedBarkod] = useState<string | null>(null);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
     const [editingCell, setEditingCell] = useState<{ barkod: string; field: string } | null>(null);
@@ -103,20 +104,38 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
     const [importText, setImportText] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-
+    const productMap = React.useMemo(() => {
+        const map: Record<string, any> = {};
+        if (data?.gruplar) {
+            data.gruplar.forEach((g: any) => {
+                (g.detaylar || []).forEach((u: any) => {
+                    map[u.v1] = u;
+                });
+            });
+        }
+        if (data?.miad_risk_listesi) {
+            data.miad_risk_listesi.forEach((u: any) => {
+                if (u.barkod) map[u.barkod] = { ...map[u.barkod], ...u };
+            });
+        }
+        return map;
+    }, [data]);
 
     // Derive items directly from cart prop
     const items = Object.entries(cart)
         .filter(([_, val]: any) => val.inCart && val.qty > 0)
-        .map(([id, val]: any) => ({
-            barkod: id,
-            ad: val.ad || 'Bilinmeyen Ürün',
-            depo: val.depo || 'Depo Belirsiz',
-            qty: val.qty,
-            mf: val.mf || 0,
-            v95: val.v95 || '',
-            mf_baremleri: val.mf_baremleri || []
-        }));
+        .map(([id, val]: any) => {
+            const extra = productMap[id] || {};
+            return {
+                barkod: id,
+                ad: val.ad || extra.v2 || 'Bilinmeyen Ürün',
+                depo: val.depo || extra.v91 || 'Depo Belirsiz',
+                qty: val.qty,
+                mf: val.mf || 0,
+                v95: val.v95 || extra.v95 || '',
+                mf_baremleri: val.mf_baremleri?.length ? val.mf_baremleri : (extra.mf_baremleri || [])
+            };
+        });
 
     // --- YÜKLEME: Supabase'den sadece eczaneId (User ID) çek (Import için gerekebilir) ---
     useEffect(() => {

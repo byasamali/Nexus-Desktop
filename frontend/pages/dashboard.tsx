@@ -1741,7 +1741,7 @@ export default function OrderCockpit() {
                     setCart={setCart}
                   />
                 )}
-                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} />}
+                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} data={data} />}
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}
