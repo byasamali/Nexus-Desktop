@@ -26,8 +26,8 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                 const monthlySpeed = dailySpeed * 30;
                 const daysInactive = u.v21 || 0;
                 
-                // Kriterler: Stok <= 0 VE Hareketsizlik >= 90 gün (3 ay) VE Aylık Hız < 1
-                if (stock <= 0 && daysInactive >= 90 && monthlySpeed < 1) {
+                // Kriterler: Stok <= 0 VE (Hareketsizlik >= 60 gün (2 ay) VEYA Aylık Hız < 1)
+                if (stock <= 0 && (daysInactive >= 60 || monthlySpeed < 1)) {
                     list.push({
                         barcode: u.v1,
                         name: u.v2,
@@ -73,7 +73,7 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                 Gözden Kaçanlar
                             </h2>
                             <p className="text-xs text-slate-400 font-medium mt-1.5">
-                                Son 3 aydır (90+ gün) satılmamış, aylık satış hızı 1'den küçük olan sıfır stoklu ilaçlar.
+                                Son 2 aydır (60+ gün) satılmamış VEYA aylık satış hızı 1'den küçük olan sıfır stoklu ilaçlar.
                             </p>
                         </div>
                     </div>
@@ -209,7 +209,7 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                         </div>
                         <h4 className="text-base font-black text-slate-800">Gözden Kaçan İlaç Yok</h4>
                         <p className="text-xs text-slate-400 font-medium max-w-sm mt-1">
-                            Harika! Son 3 aydır hareketsiz olan ve aylık hızı 1'den küçük olan sıfır stoklu bir ilaç bulunmuyor.
+                            Harika! Son 2 aydır hareketsiz olan VEYA aylık hızı 1'den küçük olan sıfır stoklu bir ilaç bulunmuyor.
                         </p>
                     </div>
                 )}

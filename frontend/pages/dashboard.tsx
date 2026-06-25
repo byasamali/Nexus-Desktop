@@ -1055,11 +1055,11 @@ export default function OrderCockpit() {
         const filteredDetaylar = g.detaylar.filter((urun: any) => {
           if (ignoredBarkods.has(urun.v1)) return false;
 
-          // Son 3 ayda hareket görmemiş (>= 90 gün) ve aylık hızı < 1 olanları gizle
+          // Son 2 ayda (60 gün) hareket görmemiş VEYA aylık hızı < 1 olanları gizle
           const dailySpd = urun.v20 || 0;
           const monthlySpd = dailySpd * 30;
           const daysInactive = urun.v21 || 0;
-          if (daysInactive >= 90 && monthlySpd < 1) return false;
+          if (daysInactive >= 60 || monthlySpd < 1) return false;
 
           const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
           const isCrit = (g.tags || "").includes('ks') || (g.kritik_puan || 0) > 10;
