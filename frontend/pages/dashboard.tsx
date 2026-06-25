@@ -687,7 +687,14 @@ export default function OrderCockpit() {
       const urun = data?.gruplar?.flatMap((g: any) => g.detaylar).find((u: any) => u.v1 === barkod) as any;
       if (urun) {
         const current = newCart[barkod] || { qty: 0, mf: 0, inCart: false, ad: urun.v2, depo: urun.v91 };
-        const targetQty = current.qty > 0 ? current.qty : (urun.v26 > 0 ? urun.v26 : 1);
+        let targetQty = current.qty;
+        if (!current.inCart) {
+          const activeDays = selectedDaysLimit !== null ? selectedDaysLimit : 30;
+          const spd = urun.v20 || 0;
+          const stk = urun.v4 || 0;
+          const need = Math.round(Math.max(0, spd * activeDays - stk));
+          targetQty = need > 0 ? need : 1;
+        }
         newCart[barkod] = { ...current, qty: targetQty, inCart: true, mf: current.mf || calculateAutoMF(targetQty, urun.mf_baremleri) };
       }
     });
@@ -931,13 +938,6 @@ export default function OrderCockpit() {
 
       const initialCart: Record<string, CartItem> = {};
       Object.keys(savedCartObj).forEach(b => { initialCart[b] = { ...savedCartObj[b], inCart: true }; });
-      if (res.gruplar) {
-        res.gruplar.forEach((g: any) => {
-          g.detaylar.forEach((u: any) => {
-            if (!initialCart[u.v1] && u.v26 > 0) initialCart[u.v1] = { qty: u.v26, mf: 0, inCart: false, ad: u.v2, depo: u.v91, v95: u.v95 };
-          });
-        });
-      }
       setCart(initialCart);
     } catch (err) { console.error("Sistem hatası:", err); }
     finally { setLoading(false); }
@@ -1042,12 +1042,24 @@ export default function OrderCockpit() {
     }
   };
 
-  const updateCart = (barkod: string, qty: number, manualMf?: number, urun?: any) => {
+  const updateCart = (barkod: string, qty: number, manualMf?: number, urun?: any, forceInCart?: boolean) => {
     setCart(prev => {
       let finalMf = manualMf;
       if (manualMf === undefined && urun) finalMf = calculateAutoMF(qty, urun.mf_baremleri);
       const existing = prev[barkod] || { qty: 0, mf: 0, inCart: false, ad: "Bilinmeyen Ürün", depo: "Depo Belirsiz" };
-      return { ...prev, [barkod]: { ...existing, qty, mf: finalMf || 0, ad: urun?.v2 || existing.ad, depo: urun?.v91 || existing.depo, v95: urun?.v95 || existing.v95, mf_baremleri: urun?.mf_baremleri || existing.mf_baremleri } };
+      return { 
+        ...prev, 
+        [barkod]: { 
+          ...existing, 
+          qty, 
+          mf: finalMf || 0, 
+          inCart: forceInCart !== undefined ? forceInCart : existing.inCart,
+          ad: urun?.v2 || existing.ad, 
+          depo: urun?.v91 || existing.depo, 
+          v95: urun?.v95 || existing.v95, 
+          mf_baremleri: urun?.mf_baremleri || existing.mf_baremleri 
+        } 
+      };
     });
   };
 
@@ -1917,8 +1929,25 @@ export default function OrderCockpit() {
                           list.forEach((g: any) => {
                             g.detaylar.forEach((u: any) => {
                               if (selectedBarkods.has(u.v1)) {
-                                const qty = g.toplam_oneri > 0 ? g.toplam_oneri : (u.v26 > 0 ? u.v26 : 1);
-                                newCart[u.v1] = { ...(newCart[u.v1] || { mf: 0, ad: u.v2, depo: u.v91 }), qty, inCart: true, ad: u.v2, depo: u.v91, mf: calculateAutoMF(qty, u.mf_baremleri) };
+                                const current = newCart[u.v1] || { qty: 0, mf: 0, inCart: false, ad: u.v2, depo: u.v91 };
+                                let targetQty = current.qty;
+                                if (!current.inCart) {
+                                  const activeDays = selectedDaysLimit !== null ? selectedDaysLimit : 30;
+                                  const spd = u.v20 || 0;
+                                  const stk = u.v4 || 0;
+                                  const need = Math.round(Math.max(0, spd * activeDays - stk));
+                                  targetQty = need > 0 ? need : 1;
+                                }
+                                newCart[u.v1] = { 
+                                  ...current, 
+                                  qty: targetQty, 
+                                  inCart: true, 
+                                  mf: current.mf || calculateAutoMF(targetQty, u.mf_baremleri),
+                                  ad: u.v2,
+                                  depo: u.v91,
+                                  v95: u.v95,
+                                  mf_baremleri: u.mf_baremleri
+                                };
                               }
                             });
                           });
@@ -2537,9 +2566,8 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
   };
 
   const addToCart = () => {
-    if (!opt) { setOpt('suggestion'); updateCart(urun.v1, onr, undefined, urun); toggleCartItem(urun.v1, urun); return; }
-    updateCart(urun.v1, opt === 'need' ? need : onr, undefined, urun);
-    if (!inCart) toggleCartItem(urun.v1, urun);
+    if (!opt) { setOpt('suggestion'); updateCart(urun.v1, onr, undefined, urun, true); return; }
+    updateCart(urun.v1, opt === 'need' ? need : onr, undefined, urun, true);
   };
 
   return (
@@ -2832,10 +2860,7 @@ const TableProductRow = React.memo(function TableProductRow({
             <button 
               onClick={() => {
                 const qtyVal = customQty !== null ? customQty : (need > 0 ? need : 1);
-                updateCart(urun.v1, qtyVal, undefined, urun);
-                if (!inCart) {
-                  toggleCartItem(urun.v1, urun);
-                }
+                updateCart(urun.v1, qtyVal, undefined, urun, true);
               }}
               className={cn(
                 "h-8 w-12 rounded-lg border transition-all flex items-center justify-center font-bold",
@@ -3022,10 +3047,7 @@ function GrupDetailModal({ grup, onClose, getBreadcrumb, rawGrup, cart, updateCa
                           />
                           <button
                             onClick={() => {
-                              updateCart(u.v1, qtyVal, undefined, u);
-                              if (!inCart) {
-                                toggleCartItem(u.v1, u);
-                              }
+                              updateCart(u.v1, qtyVal, undefined, u, true);
                             }}
                             className={cn(
                               "h-6 px-1.5 text-[9px] font-bold rounded transition-all flex items-center justify-center gap-0.5 shrink-0",

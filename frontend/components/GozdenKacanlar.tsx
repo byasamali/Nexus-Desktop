@@ -194,11 +194,8 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                                     />
                                                     <button
                                                         onClick={() => {
-                                                            if (updateCart && toggleCartItem) {
-                                                                updateCart(u.v1, qtyVal, undefined, u);
-                                                                if (!inCart) {
-                                                                    toggleCartItem(u.v1, u);
-                                                                }
+                                                            if (updateCart) {
+                                                                updateCart(u.v1, qtyVal, undefined, u, true);
                                                             }
                                                         }}
                                                         className={cn(
