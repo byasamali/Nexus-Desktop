@@ -29,6 +29,16 @@ type InterceptLog = {
   supplier: string;
 };
 
+type GekProduct = {
+  matnr: string;
+  klasm: string;
+  ad: string;
+  stok: number | string;
+  psf: string;
+  timestamp: number;
+  url: string;
+};
+
 type Depo = {
   id: string; ad: string; url: string;
   kullanici: string; kod: string; sifre: string; renk: string;
@@ -86,12 +96,104 @@ const DEPO_COLORS = [
 // ── Yardımcılar ─────────────────────────────────────────────────────────────
 
 const LOCAL_KEY = 'nexus_depolar';
+const DELETED_KEY = 'nexus_depolar_silindi'; // kullanıcının kasıtlı sildiği default ID'leri
+
+const GEK_TOKEN_SCRIPT = `
+  (function() {
+    // 1. window.__gekToken (preload tarafından set edilmiş)
+    if (window.__gekToken && window.__gekToken.length > 10) return window.__gekToken;
+    // 2. localStorage / sessionStorage tara
+    const stores = [window.localStorage, window.sessionStorage];
+    const keys = ['token','Token','TOKEN','gek_token','gekToken','accessToken','access_token','auth_token','authToken','jwt','JWT'];
+    for (const store of stores) {
+      if (!store) continue;
+      for (const k of keys) {
+        try {
+          const v = store.getItem(k);
+          if (v && v.length > 10 && !v.startsWith('{')) return v;
+          if (v && v.length > 10) {
+            try { const j = JSON.parse(v); const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token; if(t) return t; } catch {}
+          }
+        } catch {}
+      }
+      // Tüm key'lere bak
+      try {
+        for (let i = 0; i < store.length; i++) {
+          const k = store.key(i);
+          if (!k) continue;
+          const v = store.getItem(k);
+          if (!v) continue;
+          if (v.length > 10 && !v.startsWith('{') && (k.toLowerCase().includes('token') || k.toLowerCase().includes('auth') || k.toLowerCase().includes('jwt'))) {
+            return v;
+          }
+          try { 
+            const j = JSON.parse(v); 
+            const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token; 
+            if(t && String(t).length > 10) return String(t); 
+          } catch {}
+        }
+      } catch {}
+    }
+    // 3. Cookie'lerden ara
+    try {
+      const cookies = document.cookie.split(';');
+      for (const c of cookies) {
+        const [k, v] = c.trim().split('=');
+        if (k && ['token','Token','TOKEN','auth','jwt'].some(kk => k.toLowerCase().includes(kk))) {
+          if (v && v.length > 10) return decodeURIComponent(v);
+        }
+      }
+    } catch {}
+    return null;
+  })()
+`;
+
+const DEFAULT_DEPOLAR: Depo[] = [
+  { id: 'selcuk',  ad: 'Selçuk Ecza', url: 'https://webdepo.selcukecza.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#3b82f6', enabled: true },
+  { id: 'as_ecza', ad: 'AS Ecza',     url: 'https://webdepo.asecza.com.tr/',     kullanici: '', kod: '', sifre: '', renk: '#14b8a6', enabled: true },
+  { id: 'nevzat',  ad: 'Nevzat Ecza', url: 'http://webdepo.nevzatecza.com.tr/',  kullanici: '', kod: '', sifre: '', renk: '#f59e0b', enabled: true },
+  { id: 'iskoop',  ad: 'İskoop',      url: 'https://esube.iskoop.org/',           kullanici: '', kod: '', sifre: '', renk: '#8b5cf6', enabled: true },
+  { id: 'bek',     ad: 'BEK',         url: 'https://esube.bek.org.tr/',           kullanici: '', kod: '', sifre: '', renk: '#10b981', enabled: true },
+  { id: 'gek',     ad: 'GEK',         url: 'https://esube.gek.org.tr/',           kullanici: '', kod: '', sifre: '', renk: '#f97316', enabled: true },
+];
+
+function loadDeletedIds(): Set<string> {
+  try {
+    if (typeof window === 'undefined') return new Set();
+    const r = localStorage.getItem(DELETED_KEY);
+    return r ? new Set(JSON.parse(r)) : new Set();
+  } catch { return new Set(); }
+}
+
+function saveDeletedId(id: string) {
+  try {
+    if (typeof window === 'undefined') return;
+    const ids = loadDeletedIds();
+    ids.add(id);
+    localStorage.setItem(DELETED_KEY, JSON.stringify([...ids]));
+  } catch {}
+}
 
 function loadDepolar(): Depo[] {
-  try { const r = localStorage.getItem(LOCAL_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
+  try {
+    if (typeof window === 'undefined') return [...DEFAULT_DEPOLAR];
+    const deleted = loadDeletedIds();
+    const r = localStorage.getItem(LOCAL_KEY);
+    const existing: Depo[] = r ? JSON.parse(r) : [];
+    const existingIds = new Set(existing.map(d => d.id));
+    const toAdd = DEFAULT_DEPOLAR.filter(d => !deleted.has(d.id) && !existingIds.has(d.id));
+    const merged = [...toAdd, ...existing];
+    if (toAdd.length > 0) saveDepolar(merged);
+    return merged;
+  } catch {
+    return [...DEFAULT_DEPOLAR];
+  }
 }
 function saveDepolar(d: Depo[]) {
-  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(d)); } catch {}
+  try {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(d));
+  } catch {}
 }
 function randomId() { return Math.random().toString(36).slice(2, 10); }
 function ensureHttp(url: string) {
@@ -114,8 +216,77 @@ function extractSpans(html: string): string[] {
 function parsePrice(val: any): number {
   if (typeof val === 'number') return val;
   if (!val) return 0;
-  const clean = String(val).replace(/\./g, '').replace(',', '.');
-  return parseFloat(clean) || 0;
+  const str = String(val).trim();
+  
+  // Eğer hem nokta hem virgül varsa
+  if (str.includes('.') && str.includes(',')) {
+    const dotIdx = str.indexOf('.');
+    const commaIdx = str.indexOf(',');
+    if (commaIdx > dotIdx) {
+      // Türkçe format: 1.170,50 -> Noktaları sil, virgülü nokta yap
+      return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+    } else {
+      // İngilizce format: 1,170.50 -> Virgülleri sil
+      return parseFloat(str.replace(/,/g, '')) || 0;
+    }
+  }
+  
+  // Sadece virgül varsa: 117,10 -> Nokta yap
+  if (str.includes(',')) {
+    return parseFloat(str.replace(',', '.')) || 0;
+  }
+  
+  // Sadece nokta varsa veya hiçbir şey yoksa: 117.10 veya 117 -> Doğrudan parse et
+  return parseFloat(str) || 0;
+}
+
+/** Sorgulanan depo/kampanya verileriyle SQLite veritabanını günceller */
+async function updateDbWithLiveData(
+  barcode: string,
+  dsf: number,
+  psf: number,
+  mfList: string[]
+) {
+  try {
+    const dbMfBaremleri: { ana: number; mf: number }[] = [];
+    
+    const parseMfBarem = (mfStr: string | null | undefined) => {
+      if (!mfStr) return null;
+      const clean = mfStr.trim();
+      if (!clean.includes('+')) return null;
+      const parts = clean.split('+');
+      if (parts.length < 2) return null;
+      const ana = parseInt(parts[0]);
+      const mf = parseInt(parts[1]);
+      if (isNaN(ana) || isNaN(mf)) return null;
+      if (mf <= 0) return null; // xx+0 şeklinde olan mf ler aslında mf değildir
+      return { ana, mf };
+    };
+
+    mfList.forEach(rawMf => {
+      const parsed = parseMfBarem(rawMf);
+      if (parsed) dbMfBaremleri.push(parsed);
+    });
+
+    const mfBaremleriStr = JSON.stringify(dbMfBaremleri);
+
+    if ((window as any).go?.main?.App?.RunCategoryAction) {
+      const responseStr = await (window as any).go.main.App.RunCategoryAction(
+        "update-live-data",
+        JSON.stringify({
+          barcode,
+          data: {
+            dsf: dsf,
+            psf: psf,
+            mf_baremleri: mfBaremleriStr
+          }
+        })
+      );
+      console.log(`[Database Update] ${barcode} için veriler güncellendi:`, responseStr);
+    }
+  } catch (err) {
+    console.error(`[Database Update] ${barcode} güncelleme hatası:`, err);
+  }
 }
 
 const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
@@ -167,7 +338,21 @@ function ToastNotification({ toast, onClose }: { toast: ToastMsg | null; onClose
 
 // ── Mini Sepet ───────────────────────────────────────────────────────────────
 
-function MiniSepet({ cart, onBarcodeDoubleClick }: { cart: Record<string, CartItem>; onBarcodeDoubleClick?: (barcode: string) => void }) {
+// ── Mini Sepet ───────────────────────────────────────────────────────────────
+
+function MiniSepet({
+  cart,
+  onBarcodeDoubleClick,
+  bulkQueryResult,
+  bulkQueryLoading,
+  onBulkQuery,
+}: {
+  cart: Record<string, CartItem>;
+  onBarcodeDoubleClick?: (barcode: string) => void;
+  bulkQueryResult?: Record<string, { ok: boolean; stok?: number; fiyat_depocu?: number; mf?: string; net?: number; error?: string }>;
+  bulkQueryLoading?: boolean;
+  onBulkQuery?: () => void;
+}) {
   const [copied, setCopied] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
@@ -199,16 +384,34 @@ function MiniSepet({ cart, onBarcodeDoubleClick }: { cart: Record<string, CartIt
     <div className="flex flex-col h-full bg-white">
       {/* Başlık */}
       <div className="px-4 pt-4 pb-3 border-b border-stone-100 shrink-0">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="h-8 w-8 rounded-xl bg-teal-600 flex items-center justify-center">
-            <ShoppingCart size={15} className="text-white" />
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-xl bg-teal-600 flex items-center justify-center">
+              <ShoppingCart size={15} className="text-white" />
+            </div>
+            <div>
+              <p className="text-[13px] font-black text-stone-900 leading-none">Sipariş Sepeti</p>
+              <p className="text-[10px] text-stone-400 font-medium mt-0.5">
+                {cartItems.length} kalem · {totalKutu} kutu
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-[13px] font-black text-stone-900 leading-none">Sipariş Sepeti</p>
-            <p className="text-[10px] text-stone-400 font-medium mt-0.5">
-              {cartItems.length} kalem · {totalKutu} kutu
-            </p>
-          </div>
+          {cartItems.length > 0 && onBulkQuery && (
+            <button
+              onClick={onBulkQuery}
+              disabled={bulkQueryLoading}
+              className={cn(
+                "flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0",
+                bulkQueryLoading
+                  ? "bg-stone-50 border-stone-200 text-stone-400 cursor-not-allowed"
+                  : "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700 active:scale-95"
+              )}
+              title="Sepetteki tüm ürünleri AS Ecza'dan sorgular"
+            >
+              <RefreshCw size={10} className={cn("text-teal-600", bulkQueryLoading && "animate-spin")} />
+              {bulkQueryLoading ? "Sorgulanıyor..." : "Toplu MF Sor"}
+            </button>
+          )}
         </div>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-stone-400" />
@@ -240,6 +443,7 @@ function MiniSepet({ cart, onBarcodeDoubleClick }: { cart: Record<string, CartIt
               const firstName = item.ad.split(' ')[0];
               const isCB = copied === `barkod-${barkod}`;
               const isCA = copied === `ad-${barkod}`;
+              const res = bulkQueryResult?.[barkod];
               return (
                 <div key={barkod} className="group px-3 py-2.5 hover:bg-stone-50/80 transition-colors">
                   <button onClick={() => copyText(firstName, `ad-${barkod}`)}
@@ -275,6 +479,34 @@ function MiniSepet({ cart, onBarcodeDoubleClick }: { cart: Record<string, CartIt
                       )}
                     </div>
                   </div>
+                  {res && (
+                    <div className="mt-1.5 pt-1.5 border-t border-dashed border-stone-100 flex items-center justify-between text-[10px] text-stone-500 font-medium">
+                      {res.ok ? (
+                        <>
+                          <div className="flex items-center gap-1.5">
+                            <span className={cn(
+                              "px-1 py-0.2 rounded font-bold text-[9px]",
+                              res.stok && res.stok > 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                            )}>
+                              Stok: {res.stok ?? 0}
+                            </span>
+                            {res.mf && (
+                              <span className="bg-amber-50 text-amber-700 font-bold px-1 py-0.2 rounded text-[9px]">
+                                MF: {res.mf}
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-bold text-stone-700">
+                            {res.net ? `${res.net.toFixed(2)} TL` : res.fiyat_depocu ? `${res.fiyat_depocu.toFixed(2)} TL` : ''}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-rose-500 text-[9px]">
+                          {res.error === 'not_found' ? 'AS\'ta bulunamadı' : 'Sorgu hatası'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -422,10 +654,174 @@ function DepoCard({ depo, onOpen, onEdit, onDelete }: {
   );
 }
 
+const getAutofillScript = (depo: any, autoSubmit = false) => {
+  const code = (depo.kod || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const user = (depo.kullanici || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const pass = (depo.sifre || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  
+  return `
+    (function() {
+      console.log("[Nexus Autofill] Starting credentials auto-fill loop for ${depo.id}...");
+      
+      const setInputValue = (input, val) => {
+        if (!input) return false;
+        if (input.value === val) return true;
+        
+        input.focus();
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (nativeSetter) {
+          nativeSetter.call(input, val);
+        } else {
+          input.value = val;
+        }
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.blur();
+        return true;
+      };
+
+      const triggerSubmit = (btn) => {
+        try {
+          const url = window.location.href;
+          const attemptKey = 'nexus_auto_login_attempted_' + encodeURIComponent(url);
+          if (!sessionStorage.getItem(attemptKey)) {
+            sessionStorage.setItem(attemptKey, 'true');
+            if (btn) {
+              console.log("[Nexus Autofill] Auto-submitting login form via button click...");
+              btn.click();
+            } else {
+              const form = document.querySelector('form');
+              if (form) {
+                console.log("[Nexus Autofill] Auto-submitting parent form...");
+                form.submit();
+              }
+            }
+          } else {
+            console.log("[Nexus Autofill] Auto-submit already attempted for this session, skipping.");
+          }
+        } catch (e) {
+          console.error("[Nexus Autofill] Error in triggerSubmit:", e);
+        }
+      };
+
+      const url = window.location.href;
+      let attempts = 0;
+      const maxAttempts = 30;
+
+      if (window.__nexusAutofillInterval) {
+        clearInterval(window.__nexusAutofillInterval);
+      }
+
+      window.__nexusAutofillInterval = setInterval(() => {
+        attempts++;
+        if (attempts > maxAttempts) {
+          clearInterval(window.__nexusAutofillInterval);
+          window.__nexusAutofillInterval = null;
+          console.log("[Nexus Autofill] Stopped polling after max attempts.");
+          return;
+        }
+
+        // 1. Selcuk, AS Ecza, Nevzat (EGAS Webdepo portals)
+        if (url.includes('selcuk') || url.includes('asecza') || url.includes('nevzatecza') || url.includes('webdepo')) {
+          const txtCode = document.querySelector('#txtEczaneKodu') || 
+                          document.querySelector('input[id$="txtEczaneKodu"]') || 
+                          document.querySelector('input[name*="txtEczaneKodu"]');
+          const txtUser = document.querySelector('#txtKullaniciAdi') || 
+                          document.querySelector('input[id$="txtKullaniciAdi"]') || 
+                          document.querySelector('input[name*="txtKullaniciAdi"]');
+          const txtPass = document.querySelector('#txtSifre') || 
+                          document.querySelector('input[id$="txtSifre"]') || 
+                          document.querySelector('input[name*="txtSifre"]');
+          
+          if (txtCode && "${user}" && txtCode.value !== "${user}") {
+            setInputValue(txtCode, "${user}");
+          }
+          if (txtUser && "${code}" && txtUser.value !== "${code}") {
+            setInputValue(txtUser, "${code}");
+          }
+          if (txtPass && "${pass}" && txtPass.value !== "${pass}") {
+            setInputValue(txtPass, "${pass}");
+          }
+          
+          const codeReady = !"${user}" || (txtCode && txtCode.value === "${user}");
+          const userReady = !"${code}" || (txtUser && txtUser.value === "${code}");
+          const passReady = !"${pass}" || (txtPass && txtPass.value === "${pass}");
+          
+          if (codeReady && userReady && passReady) {
+            clearInterval(window.__nexusAutofillInterval);
+            window.__nexusAutofillInterval = null;
+            console.log("[Nexus Autofill] All fields filled, stopping poll.");
+            
+            if (${autoSubmit}) {
+              const submitBtn = document.querySelector('#btnGiris') || 
+                                document.querySelector('input[id$="btnGiris"]') || 
+                                document.querySelector('input[name*="btnGiris"]') || 
+                                document.querySelector('input[type="submit"]') || 
+                                document.querySelector('button[type="submit"]');
+              triggerSubmit(submitBtn);
+            }
+          }
+        }
+        
+        // 2. BEK, GEK, Iskop (Coop E-Şube portals)
+        else if (url.includes('bek.org.tr') || url.includes('gek.org.tr') || url.includes('iskoop.org') || url.includes('esube')) {
+          const inputs = Array.from(document.querySelectorAll('input'));
+          
+          const usernameInput = inputs.find(i => {
+            const type = (i.getAttribute('type') || '').toLowerCase();
+            if (type !== 'text' && type !== 'number' && type !== 'tel') return false;
+            
+            const id = (i.getAttribute('id') || '').toLowerCase();
+            const name = (i.getAttribute('name') || '').toLowerCase();
+            const fcn = (i.getAttribute('formcontrolname') || '').toLowerCase();
+            const ph = (i.getAttribute('placeholder') || '').toLowerCase();
+            
+            return name.includes('username') || name.includes('user') || name.includes('kod') || name.includes('ortak') || name.includes('kullanici') ||
+                   id.includes('username') || id.includes('user') || id.includes('kod') || id.includes('ortak') || id.includes('kullanici') ||
+                   fcn.includes('username') || fcn.includes('user') || fcn.includes('kod') || fcn.includes('ortak') || fcn.includes('kullanici') ||
+                   ph.includes('kullanıcı') || ph.includes('ortak') || ph.includes('kod') || ph.includes('eczane');
+          }) || inputs.find(i => {
+            const type = (i.getAttribute('type') || '').toLowerCase();
+            return (type === 'text' || type === 'number' || type === 'tel') && i.offsetWidth > 0 && i.offsetHeight > 0;
+          });
+
+          const passwordInput = inputs.find(i => (i.getAttribute('type') || '').toLowerCase() === 'password');
+
+          const loginVal = "${code}" || "${user}";
+          if (usernameInput && loginVal && usernameInput.value !== loginVal) {
+            setInputValue(usernameInput, loginVal);
+          }
+          if (passwordInput && "${pass}" && passwordInput.value !== "${pass}") {
+            setInputValue(passwordInput, "${pass}");
+          }
+
+          const userReady = !loginVal || (usernameInput && usernameInput.value === loginVal);
+          const passReady = !"${pass}" || (passwordInput && passwordInput.value === "${pass}");
+          
+          if (userReady && passReady) {
+            clearInterval(window.__nexusAutofillInterval);
+            window.__nexusAutofillInterval = null;
+            console.log("[Nexus Autofill] All fields filled, stopping poll.");
+            
+            if (${autoSubmit}) {
+              const submitBtn = document.querySelector('button[type="submit"]') || 
+                                document.querySelector('input[type="submit"]') || 
+                                document.querySelector('.btn-login') || 
+                                document.querySelector('#btnLogin') || 
+                                document.querySelector('button[id$="btnGiris"]');
+              triggerSubmit(submitBtn);
+            }
+          }
+        }
+      }, 300);
+    })();
+  `;
+};
+
 // ── Tarayıcı Paneli (proxy-destekli webview) ─────────────────────────────────
 
 function BrowserPanel({
-  tabs, activeTabId, onTabChange, onTabClose, onTabAdd, onNavigate, preloadPath, onIpcMessage, pendingSearch, onSearchProcessed, pendingOrder, onOrderProcessed, onOrderResult
+  tabs, activeTabId, onTabChange, onTabClose, onTabAdd, onNavigate, preloadPath, onIpcMessage, pendingSearch, onSearchProcessed, pendingOrder, onOrderProcessed, onOrderResult, webviewRefs: extWebviewRefs, depolar
 }: {
   tabs: BrowserTab[];
   activeTabId: string;
@@ -440,10 +836,20 @@ function BrowserPanel({
   pendingOrder: PendingOrder | null;
   onOrderProcessed: () => void;
   onOrderResult: (result: OrderResult) => void;
+  webviewRefs?: React.MutableRefObject<Record<string, any>>;
+  depolar: Depo[];
 }) {
   const [addressBar, setAddressBar] = useState('');
+  const depolarRef = useRef(depolar);
+  depolarRef.current = depolar;
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({});
   const activeTab = tabs.find(t => t.id === activeTabId);
+
+  // Dışarıdaki ref'e de yaz (GEK executeJavaScript için)
+  const setWebviewRef = (id: string, el: any) => {
+    iframeRefs.current[id] = el;
+    if (extWebviewRefs) extWebviewRefs.current[id] = el;
+  };
 
   useEffect(() => {
     if (activeTab) setAddressBar(activeTab.displayUrl || activeTab.proxyUrl);
@@ -793,19 +1199,57 @@ function BrowserPanel({
 
       {/* webview alanı */}
       <div className="flex-1 relative bg-white">
-        {tabs.map(tab => (
+        {preloadPath && tabs.map(tab => (
           React.createElement('webview', {
             key: tab.id,
             ref: (el: any) => {
-              iframeRefs.current[tab.id] = el;
+              setWebviewRef(tab.id, el);
               if (el) {
                 el.removeEventListener('ipc-message', onIpcMessage);
                 el.addEventListener('ipc-message', onIpcMessage);
+
+                if (!el.__autofillSetupDone) {
+                  el.__autofillSetupDone = true;
+                  const runAutofill = async () => {
+                    try {
+                      const latestDepolar = depolarRef.current || [];
+                      let depo = latestDepolar.find((d: any) => d.id === tab.depoId);
+                      if (!depo) {
+                        // Try matching by URL as fallback
+                        const currentUrl = (typeof el.getURL === 'function' ? el.getURL() : '') || el.src || '';
+                        if (currentUrl) {
+                          depo = latestDepolar.find((d: any) => {
+                            if (!d.url) return false;
+                            try {
+                              const dHost = new URL(d.url).hostname.replace('www.', '');
+                              const curHost = new URL(currentUrl).hostname.replace('www.', '');
+                              return dHost === curHost || curHost.includes(dHost) || dHost.includes(curHost);
+                            } catch {
+                              return false;
+                            }
+                          });
+                        }
+                      }
+                      if (depo && (depo.kullanici || depo.kod || depo.sifre)) {
+                        console.log(`[Nexus Autofill] Running script for ${depo.id} on event`);
+                        const script = getAutofillScript(depo, !!depo.autoOpen);
+                        await el.executeJavaScript(script);
+                      }
+                    } catch (err) {
+                      console.error("[Nexus Autofill] executeJavaScript error:", err);
+                    }
+                  };
+                  el.addEventListener('dom-ready', runAutofill);
+                  el.addEventListener('did-navigate', runAutofill);
+                  el.addEventListener('did-frame-navigate', runAutofill);
+                  el.addEventListener('did-navigate-in-page', runAutofill);
+                }
               }
             },
             src: tab.proxyUrl || 'about:blank',
             partition: 'persist:depolar',
             preload: preloadPath || undefined,
+            webpreferences: 'nodeIntegrationInSubFrames=yes,contextIsolation=yes,nodeIntegration=no',
             className: cn("absolute inset-0 w-full h-full border-0 transition-opacity duration-200",
               tab.id === activeTabId ? "opacity-100 pointer-events-auto z-10" : "opacity-0 pointer-events-none z-0")
           })
@@ -829,7 +1273,7 @@ function BrowserPanel({
 
 // ── Ana Bileşen ──────────────────────────────────────────────────────────────
 
-export default function Depolar({ cart, gln, onBack }: DepolarProps) {
+export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs }: any) {
   const [depolar, setDepolar] = useState<Depo[]>(loadDepolar);
   const [showModal, setShowModal] = useState(false);
   const [editingDepo, setEditingDepo] = useState<Depo | undefined>(undefined);
@@ -845,14 +1289,45 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
   const [preloadPath, setPreloadPath] = useState<string | undefined>(undefined);
   const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
   const [toast, setToast] = useState<ToastMsg | null>(null);
+  const [gekToken, setGekToken] = useState<string>('');
+  const [gekProducts, setGekProducts] = useState<GekProduct[]>([]);
+  const [showGekPanel, setShowGekPanel] = useState(false);
+  const pendingGekDetail = useRef<{ matnr: string; klasm: string; ad: string } | null>(null);
+  const gekSearchCache = useRef<Map<string, { matnr: string; klasm: string; ad: string }>>(new Map());
+  // Webview element referansları (GEK executeJavaScript için)
+  const localWebviewRefs = useRef<Record<string, any>>({});
+  const webviewRefs = extWebviewRefs || localWebviewRefs;
 
-  // Preload path yükle (Electron webview için)
+  // Bulk query states
+  const [bulkQueryResult, setBulkQueryResult] = useState<Record<string, { ok: boolean; stok?: number; fiyat_depocu?: number; mf?: string; net?: number; error?: string }>>({});
+  const [bulkQueryLoading, setBulkQueryLoading] = useState(false);
+
+  // Preload path yüKle (Electron webview için)
   useEffect(() => {
-    if (isWails) {
-      (window as any).go.main.App.GetWebviewPreloadPath()
-        .then((p: string) => setPreloadPath(p))
-        .catch(() => {});
-    }
+    // Hem Wails hem Electron için dene
+    const tryGetPreloadPath = async () => {
+      try {
+        // Önce window.go (Wails)
+        if ((window as any).go?.main?.App?.GetWebviewPreloadPath) {
+          const p = await (window as any).go.main.App.GetWebviewPreloadPath();
+          if (p) { setPreloadPath(p); return; }
+        }
+        // Electron IPC üzerinden
+        if ((window as any).electronAPI?.invoke) {
+          const p = await (window as any).electronAPI.invoke('wails:GetWebviewPreloadPath');
+          if (p) { setPreloadPath(p); return; }
+        }
+        // Node integration aktifse doğrudan ipcRenderer
+        if ((window as any).require) {
+          const { ipcRenderer } = (window as any).require('electron');
+          const p = await ipcRenderer.invoke('wails:GetWebviewPreloadPath');
+          if (p) { setPreloadPath(p); return; }
+        }
+      } catch (e) {
+        console.warn('[Depolar] preloadPath alınamadı:', e);
+      }
+    };
+    tryGetPreloadPath();
   }, []);
 
   // Başlangıçta işaretli depoları otomatik aç
@@ -896,6 +1371,9 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
   };
 
   const handleDeleteDepo = (id: string) => {
+    // Eğer default bir depo siliniyorsa, bir sonraki yüklemede geri gelmemesi için kaydet
+    const isDefault = DEFAULT_DEPOLAR.some(d => d.id === id);
+    if (isDefault) saveDeletedId(id);
     setDepolar(prev => { const next = prev.filter(d => d.id !== id); saveDepolar(next); return next; });
   };
 
@@ -932,8 +1410,288 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
     };
   }, [tabs]);
 
-  // ── Barkoda çift tıklama → AS Ecza'ya sipariş ────────────────────────────
+  // ── GEK Barkod Arama (önce tanımlanmalı — handleBarcodeDoubleClick kullanıyor) ───────
+  const searchGekBarcode = useCallback(async (barcode: string, token?: string): Promise<any> => {
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    const isGekTab = activeTabObj?.displayUrl?.includes('gek.org.tr');
+    if (!isGekTab) return null;
+
+    const webview = webviewRefs.current[activeTabId];
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      console.warn('[GEK] executeJavaScript desteklenmiyor - webview gerekli');
+      return null;
+    }
+
+    // Token önce argümandan, sonra state'ten al
+    const stateToken = token || gekToken || (typeof window !== 'undefined' ? localStorage.getItem('nexus_gek_token') : '') || '';
+
+    let usedToken = stateToken;
+    if (!usedToken || usedToken.length < 10) {
+      try {
+        const pageToken = await webview.executeJavaScript(GEK_TOKEN_SCRIPT);
+        if (pageToken && typeof pageToken === 'string' && pageToken.length > 10) {
+          console.log('[GEK] Token sayfadan okundu, uzunluk:', pageToken.length);
+          setGekToken(pageToken);
+          if (typeof window !== 'undefined') localStorage.setItem('nexus_gek_token', pageToken);
+          usedToken = pageToken;
+        }
+      } catch (e) {
+        console.warn('[GEK] Token okuma hatası:', e);
+      }
+    }
+
+    const script = `
+      (async function() {
+        try {
+          // Token önce sayfadan, sonra argümandan
+          const tok = window.__gekToken || ${JSON.stringify(usedToken || '')};
+          if (!tok || tok.length < 10) return { error: 'token_yok' };
+          const base = 'https://esube.gek.org.tr/MainService/api/rfc';
+          const h = { 'accept': 'application/json;charset=UTF-8', 'TOKEN': tok, 'sln': '1' };
+
+          // Adım 1: Arama Hazırlığı (ss)
+          await fetch(base + '/mat/ss?ST=${barcode}',
+            { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+
+          // Adım 2: Barkod ile ürün ara
+          const sr = await fetch(base + '/mat/sm?ST=${barcode}&TYP=3',
+            { method: 'GET', headers: h, credentials: 'include' });
+          if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
+          if (!sr.ok) return { error: 'arama_basarisiz', status: sr.status };
+          const sd = await sr.json();
+          const items = sd && Array.isArray(sd.ET_MAKTX) ? sd.ET_MAKTX : [];
+          if (!items.length) return { error: 'urun_bulunamadi', searchData: sd };
+
+          const matnr = String(items[0].MATNR || '');
+          const klasm = String(items[0].KLASM || items[0].JIP_KLASM || '');
+          const ad    = String(items[0].MAKTX || items[0].AD || '');
+
+          // Adım 2: Detay çek
+          const dr = await fetch(base + '/mat/ms?MATNR=' + encodeURIComponent(matnr),
+            { method: 'POST', headers: { ...h, 'content-type': 'application/json' },
+              credentials: 'include', body: '{}' });
+          const dd = dr.ok ? await dr.json() : null;
+
+          return { ok: true, matnr, klasm, ad, searchData: sd, detailData: dd };
+        } catch(e) {
+          return { error: String(e && e.message ? e.message : e) };
+        }
+      })()
+    `;
+
+    try {
+      const result = await webview.executeJavaScript(script);
+      console.log('[GEK] Arama sonucu:', result);
+      return result;
+    } catch (err) {
+      console.error('[GEK] executeJavaScript hatası:', err);
+      return { error: String(err) };
+    }
+  }, [tabs, activeTabId, gekToken]);
+
+  // ── GEK Sepete Ekleme / Sipariş Verme ──────────────────────────────────────
+  const orderGekBarcode = useCallback(async (barcode: string, qty: number, token?: string): Promise<any> => {
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    const isGekTab = activeTabObj?.displayUrl?.includes('gek.org.tr');
+    if (!isGekTab) return null;
+
+    const webview = webviewRefs.current[activeTabId];
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      console.warn('[GEK] executeJavaScript desteklenmiyor - webview gerekli');
+      return null;
+    }
+
+    const stateToken = token || gekToken || (typeof window !== 'undefined' ? localStorage.getItem('nexus_gek_token') : '') || '';
+    let usedToken = stateToken;
+    if (!usedToken || usedToken.length < 10) {
+      try {
+        const pageToken = await webview.executeJavaScript(GEK_TOKEN_SCRIPT);
+        if (pageToken && typeof pageToken === 'string' && pageToken.length > 10) {
+          console.log('[GEK] Token sayfadan okundu, uzunluk:', pageToken.length);
+          setGekToken(pageToken);
+          if (typeof window !== 'undefined') localStorage.setItem('nexus_gek_token', pageToken);
+          usedToken = pageToken;
+        }
+      } catch (e) {
+        console.warn('[GEK] Token okuma hatası:', e);
+      }
+    }
+
+    const script = `
+      (async function() {
+        try {
+          const tok = window.__gekToken || ${JSON.stringify(usedToken || '')};
+          if (!tok || tok.length < 10) return { error: 'token_yok' };
+          const base = 'https://esube.gek.org.tr/MainService/api/rfc';
+          const h = { 'accept': 'application/json;charset=UTF-8', 'token': tok };
+
+          // Adım 1: Barkod ile ürün ara
+          const sr = await fetch(base + '/mat/sm?ST=${barcode}&TYP=3',
+            { method: 'GET', headers: h, credentials: 'include' });
+          if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
+          if (!sr.ok) return { error: 'arama_basarisiz', status: sr.status };
+          const sd = await sr.json();
+          const items = sd && Array.isArray(sd.ET_MAKTX) ? sd.ET_MAKTX : [];
+          if (!items.length) return { error: 'urun_bulunamadi', searchData: sd };
+
+          const matnr = String(items[0].MATNR || '');
+          const klasm = String(items[0].KLASM || items[0].JIP_KLASM || '');
+          const ad    = String(items[0].MAKTX || items[0].AD || '');
+
+          // Adım 2: Detay çek (Fiyat/PSF bilgisi için)
+          const dr = await fetch(base + '/mat/ms?MATNR=' + encodeURIComponent(matnr),
+            { method: 'POST', headers: { ...h, 'content-type': 'application/json' },
+              credentials: 'include', body: '{}' });
+          if (!dr.ok) return { error: 'detay_basarisiz', status: dr.status };
+          const dd = await dr.json();
+
+          const psfVal = dd?.ET_A004?.[0]?.KBETR ?? dd?.PSF ?? 0;
+          const psfNum = Number(psfVal);
+          const psf = Number.isFinite(psfNum) ? psfNum : 0;
+          const qty = ${qty};
+
+          // Adım 3: Sepete ekle
+          const orderUrl = base + '/order/ab?IP_AUGRU=P10&IP_CIHAZ=DESK';
+          const orderBody = {
+            IP_ADET: qty,
+            IP_IPTAL: "",
+            IP_LPRIO: "02",
+            IP_MATNR: matnr,
+            IP_PSTYV: "",
+            IP_S_LINE: {
+              BDURUN: "",
+              KALEM_NOT: null,
+              LPRIO: "02",
+              MATNR: matnr,
+              MISK: 0,
+              TESTIP: "01",
+              TTAR: "",
+              UPDAT: "I",
+              VSART: "Z1",
+              ZADET: qty,
+              ZMMF: 0
+            },
+            IP_S_MAN_PSF: {
+              LGORT: "1002",
+              PSF: psf,
+              SECILI: "X",
+              STD_FYT: "X"
+            },
+            IP_S_MAN_WERKS: {},
+            IP_VBELN: null,
+            JIP_KLASM: klasm
+          };
+
+          const or = await fetch(orderUrl, {
+            method: 'POST',
+            headers: { 
+              'accept': 'application/json;charset=UTF-8', 
+              'content-type': 'application/json',
+              'token': tok,
+              'sln': '1'
+            },
+            credentials: 'include',
+            body: JSON.stringify(orderBody)
+          });
+
+          if (!or.ok) {
+            if (or.status === 401 || or.status === 403) return { error: 'login_required' };
+            const detailText = await or.text().catch(() => '');
+            return { error: 'sepet_ekleme_basarisiz', status: or.status, detail: detailText };
+          }
+
+          const od = await or.json();
+          const vbeln = od && typeof od === 'object' && (od.EP_VBELN || od.VBELN || (od.EP_S_HEAD && od.EP_S_HEAD.VBELN)) || null;
+
+          // Adım 4: Onay/Kontrol (opsiyonel)
+          let ocData = null;
+          if (vbeln) {
+            const ocUrl = base + '/order/oc?VBELN=' + encodeURIComponent(String(vbeln));
+            const ocr = await fetch(ocUrl, {
+              method: 'GET',
+              headers: { 
+                'accept': 'application/json;charset=UTF-8', 
+                'token': tok,
+                'sln': '1'
+              },
+              credentials: 'include'
+            });
+            if (ocr.ok) {
+              ocData = await ocr.json().catch(() => null);
+            }
+          }
+
+          return { ok: true, matnr, klasm, ad, searchData: sd, detailData: dd, orderData: od, vbeln, ocData };
+        } catch(e) {
+          return { error: String(e && e.message ? e.message : e) };
+        }
+      })()
+    `;
+
+    try {
+      const result = await webview.executeJavaScript(script);
+      console.log('[GEK] Sipariş sonucu:', result);
+      return result;
+    } catch (err) {
+      console.error('[GEK] executeJavaScript sipariş hatası:', err);
+      return { error: String(err) };
+    }
+  }, [tabs, activeTabId, gekToken]);
+
+  // ── Barkoda çift tıklama → Aktif sekmeye göre GEK ara veya AS Ecza sipariş ─
+
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    const isGekTab = activeTabObj?.displayUrl?.includes('gek.org.tr');
+
+    // ── GEK sekmesi aktifse: GEK siparişi ver ──────────────────────────────
+    if (isGekTab) {
+      const item = cart[barcode];
+      if (!item || item.qty <= 0) {
+        setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      setToast({ id: Date.now(), message: `⏳ GEK'te ${barcode} için sipariş veriliyor...`, type: 'loading' });
+      const result = await orderGekBarcode(barcode, item.qty);
+
+      if (!result) {
+        setToast({ id: Date.now(), message: '⚠️ GEK siparişi başlatılamadı (webview hazır değil)', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+      if (result.error === 'token_yok') {
+        setToast({ id: Date.now(), message: '🔑 GEK token bulunamadı — önce GEK\'e giriş yapın', type: 'error' });
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+      if (result.error === 'login_required') {
+        setToast({ id: Date.now(), message: '🔑 GEK oturumu gerekli — lütfen giriş yapın', type: 'error' });
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+      if (result.error === 'urun_bulunamadi') {
+        setToast({ id: Date.now(), message: `❌ GEK'te ürün bulunamadı: ${barcode}`, type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+      if (result.error) {
+        setToast({ id: Date.now(), message: `❌ GEK hatası: ${result.error}`, type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      // Başarılı — ürün sepete eklendi
+      const ad = result.ad || barcode;
+      const vbelnStr = result.vbeln ? ` (Sipariş No: ${result.vbeln})` : '';
+      setToast({ id: Date.now(), message: `✅ ${ad} için GEK'e sipariş başarıyla verildi!${vbelnStr}`, type: 'success' });
+      setTimeout(() => setToast(null), 6000);
+      console.log('[GEK] Sipariş başarılı, tam sonuç:', result);
+      return;
+    }
+
+    // ── GEK sekmesi değilse: AS Ecza siparişi ────────────────────────────────
     const item = cart[barcode];
     if (!item || item.qty <= 0) {
       setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
@@ -953,7 +1711,6 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
       setTabs(prev => [...prev, newTab]);
       asTab = newTab;
       setActiveTabId(newTab.id);
-      // Yeni tab için yüklenmesi bekleniyor
       await new Promise(r => setTimeout(r, 2500));
     } else {
       setActiveTabId(asTab.id);
@@ -961,6 +1718,227 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
     }
 
     setPendingOrder({ barcode, qty: item.qty, timestamp: Date.now() });
+  }, [cart, tabs, activeTabId, searchGekBarcode, orderGekBarcode]);
+
+  // ── Toplu AS Ecza Fiyat ve MF Sorgulama ────────────────────────────────────
+  // ── Toplu AS Ecza Fiyat ve MF Sorgulama ────────────────────────────────────
+  const triggerAsEczaBulkQuery = useCallback(async () => {
+    // 1. Get all barcodes from cart that are inCart and qty > 0
+    const barcodes = Object.entries(cart)
+      .filter(([, v]) => v.inCart && v.qty > 0)
+      .map(([barkod]) => barkod);
+
+    if (barcodes.length === 0) {
+      setToast({ id: Date.now(), message: '⚠️ Sepette sorgulanacak ürün yok', type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    // 2. Find the AS Ecza tab
+    const asTab = tabs.find(t => t.displayUrl && t.displayUrl.includes('asecza.com.tr'));
+    if (!asTab) {
+      setToast({ id: Date.now(), message: '⚠️ Lütfen önce AS Ecza sekmesini açın ve giriş yapın.', type: 'error' });
+      setTimeout(() => setToast(null), 5000);
+      return;
+    }
+
+    const webview = webviewRefs.current[asTab.id] as any;
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      setToast({ id: Date.now(), message: '❌ AS Ecza tarayıcı paneli hazır değil', type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    // Check if user is logged in (from URL)
+    try {
+      const currentUrl: string = await webview.executeJavaScript('location.href');
+      if (currentUrl.includes('/Login.aspx') || currentUrl.includes('login.aspx')) {
+        setToast({ id: Date.now(), message: '🔑 AS Ecza oturumu gerekli — lütfen giriş yapın', type: 'error' });
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+    } catch (err) {
+      setToast({ id: Date.now(), message: '❌ AS Ecza durum kontrolü başarısız oldu', type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    setBulkQueryLoading(true);
+
+    try {
+      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+      let loginRequiredEncountered = false;
+
+      for (let i = 0; i < barcodes.length; i++) {
+        const barcode = barcodes[i];
+
+        // Update status toast with current progress
+        setToast({
+          id: Date.now(),
+          message: `⏳ AS Ecza'dan sorgulanıyor... [${i + 1}/${barcodes.length}]`,
+          type: 'loading'
+        });
+
+        try {
+          const barcodeJson = JSON.stringify(barcode);
+          const searchResult: any = await webview.executeJavaScript(`
+            (async function() {
+              try {
+                const params = new URLSearchParams({
+                  action: 'GetUrunler', searchText: ${barcodeJson},
+                  isInculude: 'false', isStoktakiler: 'false', siralama: 'ilacASC',
+                  marka: '', baslangicSayfasi: '0', topRowNum: '0', sayfaMaxRowAdet: '20', s: 's'
+                });
+                const resp = await fetch('/Siparis/hizlisiparis-ajax.aspx', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                  credentials: 'include',
+                  body: params.toString()
+                });
+                if (!resp.ok) return { error: (resp.status === 401 || resp.status === 403) ? 'login_required' : 'search_http_' + resp.status };
+                const data = await resp.json();
+                if (data.hataId === 9 || String(data.hataId) === '9') return { error: 'login_required' };
+                if (data.hataId !== 0) return { error: data.hataStr || 'search_error' };
+                const urunler = data && data.obj && data.obj.urunler;
+                if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+                const u = urunler[0];
+                return { kod: String(u.kodu || ''), ILACTIP: String(u.ILACTIP || ''), ad: String(u.ad || '') };
+              } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+            })()
+          `);
+
+          if (searchResult.error) {
+            if (searchResult.error === 'login_required') {
+              loginRequiredEncountered = true;
+              setBulkQueryResult(prev => ({
+                ...prev,
+                [barcode]: { ok: false, error: 'login_required' }
+              }));
+              break;
+            }
+            setBulkQueryResult(prev => ({
+              ...prev,
+              [barcode]: { ok: false, error: searchResult.error }
+            }));
+            await sleep(150);
+            continue;
+          }
+
+          const { kod, ILACTIP } = searchResult;
+          const kodJson = JSON.stringify(kod);
+          const ilacTipJson = JSON.stringify(ILACTIP);
+
+          await sleep(100);
+
+          const detailResult: any = await webview.executeJavaScript(`
+            (async function() {
+              try {
+                const params = new URLSearchParams({
+                  action: 'GetIlacDetay', kod: ${kodJson},
+                  isEsdeger: 'false', esdeger: '', isJenerik: 'false', jenerikId: '',
+                  tip: 'null', ILACTIP: ${ilacTipJson}, kampKodu: ''
+                });
+                const resp = await fetch('/Ilac/IlacGetir-ajax.aspx', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                  credentials: 'include',
+                  body: params.toString()
+                });
+                return resp.ok ? await resp.json() : null;
+              } catch { return null; }
+            })()
+          `);
+
+          if (!detailResult || !detailResult.obj) {
+            setBulkQueryResult(prev => ({
+              ...prev,
+              [barcode]: { ok: false, error: 'no_detail_data' }
+            }));
+            await sleep(150);
+            continue;
+          }
+
+          const detail = detailResult.obj;
+          const mfRaw  = detail?.grdKampanyalar?.[0]?.mf      || '';
+          const netRaw = detail?.grdKampanyalar?.[0]?.netFiyat || '';
+          const mfList  = extractSpans(mfRaw);
+          const netList = extractSpans(netRaw);
+
+          const dsfVal = parsePrice(detail.depocuFiyati);
+          const psfVal = parsePrice(detail.SonFiyat ?? detail.etiketFiyati);
+
+          setBulkQueryResult(prev => ({
+            ...prev,
+            [barcode]: {
+              ok: true,
+              stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
+              fiyat_depocu: dsfVal,
+              mf: mfList[0] || undefined,
+              net: parsePrice(netList[0]) || undefined
+            }
+          }));
+
+          // SQLite veritabanını güncel canlı verilerle güncelle
+          await updateDbWithLiveData(barcode, dsfVal, psfVal, mfList);
+
+          // Append to local JSON database log
+          try {
+            const qtyInCart = cart[barcode]?.qty || 0;
+            const entry = {
+              tarih:        new Date().toISOString().split('T')[0],
+              barkod:       barcode,
+              urun_adi:     detail?.ad        || '',
+              miktar:       qtyInCart,
+              urun_kodu:    detail?.kod       || '',
+              fiyat_etiket: +psfVal.toFixed(2),
+              fiyat_depocu: +dsfVal.toFixed(2),
+              mf1:          mfList[0]  || null,
+              mf2:          mfList[1]  || null,
+              mf3:          mfList[2]  || null,
+              net_fiyat1:   parsePrice(netList[0]),
+              net_fiyat2:   parsePrice(netList[1]),
+              net_fiyat3:   parsePrice(netList[2]),
+              stok_durumu:  detail?.stokDurumu || 0,
+              kdv:          parseInt(detail?.kdv?.val1 || 0),
+              firma_adi:    detail?.firma?.display || "",
+              urun_tipi:    detail?.urunTipi || "",
+              durum:        'success',
+              depo:         'AS ECZA'
+            };
+
+            if (isWails) {
+              await (window as any).go.main.App.AppendOrderResult(gln, entry);
+            }
+          } catch (jsonErr) {
+            console.error('[Depolar] Toplu sorgulama JSON kayıt hatası:', jsonErr);
+          }
+
+        } catch (itemErr: any) {
+          console.error(`[Depolar] ${barcode} sorgulama hatası:`, itemErr);
+          setBulkQueryResult(prev => ({
+            ...prev,
+            [barcode]: { ok: false, error: String(itemErr?.message || itemErr) }
+          }));
+        }
+
+        await sleep(150);
+      }
+
+      if (loginRequiredEncountered) {
+        setToast({ id: Date.now(), message: '🔑 AS Ecza oturumu zaman aşımına uğramış olabilir, lütfen giriş yapın', type: 'error' });
+        setTimeout(() => setToast(null), 5000);
+      } else {
+        setToast({ id: Date.now(), message: '✅ Toplu MF sorgulama tamamlandı!', type: 'success' });
+        setTimeout(() => setToast(null), 4000);
+      }
+
+    } catch (err: any) {
+      console.error('[Depolar] Toplu sorgulama hatası:', err);
+      setToast({ id: Date.now(), message: `❌ Toplu sorgulama başarısız: ${err?.message || err}`, type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setBulkQueryLoading(false);
+    }
   }, [cart, tabs]);
 
   // ── Sipariş tamamlandı → JSON'a kaydet + toast ────────────────────────────
@@ -975,21 +1953,32 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
           const mfList  = extractSpans(mfRaw);
           const netList = extractSpans(netRaw);
 
+          const dsfVal = parsePrice(detail?.depocuFiyati);
+          const psfVal = parsePrice(detail?.SonFiyat ?? detail?.etiketFiyati);
+
+          // SQLite veritabanını güncel canlı verilerle güncelle
+          await updateDbWithLiveData(result.barcode, dsfVal, psfVal, mfList);
+
           const entry = {
-            tarih:        new Date().toISOString(),
+            tarih:        new Date().toISOString().split('T')[0],
             barkod:       result.barcode,
             urun_adi:     detail?.ad        || '',
             miktar:       result.qty        ?? 0,
             urun_kodu:    detail?.kod       || '',
-            fiyat_etiket: +(parsePrice(detail?.SonFiyat ?? detail?.etiketFiyati) / (result.qty || 1)).toFixed(2),
-            fiyat_depocu: +(parsePrice(detail?.depocuFiyati) / (result.qty || 1)).toFixed(2),
+            fiyat_etiket: +psfVal.toFixed(2),
+            fiyat_depocu: +dsfVal.toFixed(2),
             mf1:          mfList[0]  || null,
             mf2:          mfList[1]  || null,
             mf3:          mfList[2]  || null,
             net_fiyat1:   parsePrice(netList[0]),
             net_fiyat2:   parsePrice(netList[1]),
             net_fiyat3:   parsePrice(netList[2]),
-            durum:        'success'
+            stok_durumu:  detail?.stokDurumu || 0,
+            kdv:          parseInt(detail?.kdv?.val1 || 0),
+            firma_adi:    detail?.firma?.display || "",
+            urun_tipi:    detail?.urunTipi || "",
+            durum:        'success',
+            depo:         'AS ECZA'
           };
 
           await (window as any).go.main.App.AppendOrderResult(gln, entry);
@@ -1043,7 +2032,123 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
     try {
       const { channel, args } = event;
       if (channel === 'depo-data-intercept') {
-        console.log('[Depolar] IPC intercept:', args?.[0]);
+        const payload = args?.[0];
+        console.log('[Depolar] IPC intercept:', payload?.type, payload?.supplier);
+
+        // ── GEK Network Traffic loglama ──────────────────────────────────────
+        if (payload?.type === 'gek-network-traffic' && payload?.supplier === 'gek') {
+          (async () => {
+            try {
+              let logs = [];
+              if ((window as any).go?.main?.App?.LoadLocalJSON) {
+                try {
+                  const content = await (window as any).go.main.App.LoadLocalJSON(gln || 'local', 'gek_network_log.json');
+                  if (content && content.trim().startsWith('[')) {
+                    logs = JSON.parse(content);
+                  }
+                } catch (e) {
+                  logs = [];
+                }
+              }
+              const entry = {
+                timestamp: new Date().toISOString(),
+                url: payload.url,
+                method: payload.method,
+                headers: payload.headers,
+                requestBody: payload.requestBody,
+                status: payload.status,
+                response: payload.response
+              };
+              logs.push(entry);
+              // limit to last 200 logs to avoid huge files
+              if (logs.length > 200) {
+                logs = logs.slice(logs.length - 200);
+              }
+              if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln || 'local', 'gek_network_log.json', JSON.stringify(logs, null, 2));
+              }
+            } catch (err) {
+              console.error('Error writing network traffic log:', err);
+            }
+          })();
+        }
+
+        // ── GEK Token yakalandı ──────────────────────────────────────────────
+        if (payload?.type === 'gek-token' && payload?.token) {
+          console.log('[Depolar] GEK token alındı, uzunluk:', payload.token.length);
+          setGekToken(payload.token);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('nexus_gek_token', payload.token);
+          }
+        }
+
+        // ── GEK API yanıtı yakalandı (pasif intercept) ───────────────────────
+        if (payload?.type === 'gek-data' && payload?.supplier === 'gek') {
+          const url: string = payload.url || '';
+          const data = payload.detailData;
+          if (!data) return;
+
+          // Ürün arama yanıtı: /rfc/mat/sm
+          if (url.includes('/rfc/mat/sm') || url.includes('/mat/sm')) {
+            const items: any[] = data?.ET_MAKTX || [];
+            items.forEach(item => {
+              const matnr = String(item.MATNR || '').trim();
+              if (matnr) {
+                gekSearchCache.current.set(matnr, {
+                  matnr,
+                  klasm: String(item.KLASM || item.JIP_KLASM || ''),
+                  ad: String(item.MAKTX || item.AD || ''),
+                });
+              }
+            });
+            console.log('[GEK] Arama cache güncellendi. Cache boyutu:', gekSearchCache.current.size);
+
+            if (items.length > 0) {
+              const item = items[0];
+              pendingGekDetail.current = {
+                matnr: String(item.MATNR || ''),
+                klasm: String(item.KLASM || item.JIP_KLASM || ''),
+                ad: String(item.MAKTX || item.AD || ''),
+              };
+            }
+          }
+
+          // Ürün detay yanıtı: /rfc/mat/ms
+          if (url.includes('/rfc/mat/ms') || url.includes('/mat/ms')) {
+            const match = url.match(/[?&]MATNR=([^&]+)/i);
+            const matnrFromUrl = match ? decodeURIComponent(match[1]).trim() : '';
+
+            let info = matnrFromUrl ? gekSearchCache.current.get(matnrFromUrl) : null;
+            if (!info && pendingGekDetail.current) {
+              info = pendingGekDetail.current;
+            }
+
+            if (info) {
+              const detail = data?.obj || data || {};
+              const stokVal = detail?.ET_MARC?.[0]?.LABST ?? detail?.LABST ?? detail?.stokDurumu ?? '?';
+              const rawPsf = detail?.tavsiyeEdilenSatisFiyati || detail?.SonFiyat || detail?.etiketFiyati || (detail?.ET_A004?.[0]?.KBETR ?? detail?.PSF ?? '');
+              const psfStr = rawPsf ? String(rawPsf) : '';
+
+              const newProd: GekProduct = {
+                matnr: info.matnr,
+                klasm: info.klasm,
+                ad: info.ad,
+                stok: String(stokVal),
+                psf: psfStr,
+                timestamp: Date.now(),
+                url,
+              };
+              console.log('[GEK] Ürün detay yakalandı:', newProd);
+              setGekProducts(prev => {
+                // Aynı matnr varsa güncelle, yoksa başa ekle (max 20 kayıt)
+                const filtered = prev.filter(p => p.matnr !== newProd.matnr);
+                return [newProd, ...filtered].slice(0, 20);
+              });
+              setShowGekPanel(true);
+              pendingGekDetail.current = null;
+            }
+          }
+        }
       }
     } catch {}
   }, []);
@@ -1098,6 +2203,27 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
 
         <div className="w-px h-5 bg-stone-200 shrink-0" />
 
+        {/* GEK Ürünleri Toggle Butonu */}
+        {gekProducts.length > 0 && (
+          <button
+            onClick={() => setShowGekPanel(v => !v)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-bold transition-all shrink-0",
+              showGekPanel
+                ? "border-orange-400 bg-orange-50 text-orange-700"
+                : "border-orange-200 bg-white text-orange-500 hover:border-orange-400 hover:bg-orange-50"
+            )}
+          >
+            <Search size={11} />
+            GEK Ürünleri
+            <span className="bg-orange-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full leading-none">
+              {gekProducts.length}
+            </span>
+          </button>
+        )}
+
+        <div className="w-px h-5 bg-stone-200 shrink-0" />
+
         {/* Ana Menüye Dönüş Butonu */}
         <button
           onClick={onBack}
@@ -1112,7 +2238,13 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
       <div className="flex flex-1 overflow-hidden">
         {/* Sol Panel — Mini Sepet */}
         <div className="w-[22%] min-w-[220px] max-w-[300px] flex flex-col h-full border-r border-stone-200 bg-white">
-          <MiniSepet cart={cart} onBarcodeDoubleClick={handleBarcodeDoubleClick} />
+          <MiniSepet
+            cart={cart}
+            onBarcodeDoubleClick={handleBarcodeDoubleClick}
+            bulkQueryResult={bulkQueryResult}
+            bulkQueryLoading={bulkQueryLoading}
+            onBulkQuery={triggerAsEczaBulkQuery}
+          />
         </div>
 
         {/* Sağ Panel — Tarayıcı Paneli */}
@@ -1131,8 +2263,94 @@ export default function Depolar({ cart, gln, onBack }: DepolarProps) {
             pendingOrder={pendingOrder}
             onOrderProcessed={() => setPendingOrder(null)}
             onOrderResult={handleOrderResult}
+            webviewRefs={webviewRefs}
+            depolar={depolar}
           />
         </div>
+
+        {/* GEK Ürün Bilgi Paneli (toggle) */}
+        {showGekPanel && gekProducts.length > 0 && (
+          <div className="w-[260px] min-w-[260px] flex flex-col h-full border-l border-orange-200 bg-white">
+            {/* Panel Başlık */}
+            <div className="flex items-center justify-between px-3 py-2.5 bg-orange-50 border-b border-orange-200 shrink-0">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                <p className="text-[11px] font-black text-orange-800 uppercase tracking-wide">GEK Ürünleri</p>
+                <span className="text-[9px] bg-orange-200 text-orange-700 font-bold px-1.5 py-0.5 rounded-full">
+                  {gekProducts.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setGekProducts([])}
+                  className="text-[9px] text-orange-400 hover:text-orange-600 font-bold transition-colors px-1"
+                  title="Listeyi Temizle"
+                >
+                  Temizle
+                </button>
+                <button
+                  onClick={() => setShowGekPanel(false)}
+                  className="p-0.5 rounded hover:bg-orange-100 text-orange-400 hover:text-orange-600 transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Ürün Listesi */}
+            <div className="flex-1 overflow-y-auto divide-y divide-stone-50">
+              {gekProducts.map((prod, i) => (
+                <div key={`${prod.matnr}-${i}`} className="px-3 py-2.5 hover:bg-stone-50/80 transition-colors group">
+                  {/* Ürün Adı */}
+                  <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1.5 line-clamp-2">
+                    {prod.ad || '—'}
+                  </p>
+                  {/* MATNR + KLASM */}
+                  <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                    {prod.matnr && (
+                      <span className="font-mono text-[9px] bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded font-bold">
+                        {prod.matnr.replace(/^0+/, '')}
+                      </span>
+                    )}
+                    {prod.klasm && (
+                      <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">
+                        {prod.klasm}
+                      </span>
+                    )}
+                  </div>
+                  {/* Stok + PSF */}
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <p className="text-[8px] font-black text-stone-400 uppercase tracking-wide mb-0.5">Stok</p>
+                      <p className={cn(
+                        "text-[12px] font-black",
+                        Number(prod.stok) > 0 ? "text-emerald-600" : "text-red-500"
+                      )}>
+                        {prod.stok}
+                      </p>
+                    </div>
+                    {prod.psf && (
+                      <div>
+                        <p className="text-[8px] font-black text-stone-400 uppercase tracking-wide mb-0.5">PSF</p>
+                        <p className="text-[12px] font-black text-stone-700">{prod.psf}</p>
+                      </div>
+                    )}
+                    <div className="ml-auto text-[8px] text-stone-300 font-medium">
+                      {new Date(prod.timestamp).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Alt bilgi */}
+            <div className="px-3 py-2 bg-orange-50/50 border-t border-orange-100 shrink-0">
+              <p className="text-[9px] text-orange-500 font-medium leading-tight">
+                💡 GEK'te arama yaptıkça ürünler otomatik eklenir
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {showModal && (

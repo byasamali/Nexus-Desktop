@@ -89,6 +89,8 @@ def main():
     else:
         print("[Python] Performing full database synchronization (last 1 year)")
 
+    stock_map = {}
+
     # 3. Connect to Database
     print("[STATUS] connecting")
     conn = None
@@ -142,6 +144,28 @@ def main():
             raw_data.append(record)
             
         print(f"Query completed successfully. Read {len(raw_data)} records.")
+        
+        # Fresh stock/price fetch
+        try:
+            print("Fetching latest stock and price levels for all active products from database...")
+            stock_query = """
+                SELECT 
+                    (SELECT TOP 1 BarkodAdi FROM Barkod WHERE BarkodUrunId = U.UrunId ORDER BY BarkodId DESC) AS barkod,
+                    (COALESCE(U.UrunStokDepo,0) + COALESCE(U.UrunStokRaf,0)) AS stok_adet,
+                    U.UrunFiyatEtiket AS lokal_psf
+                FROM Urun U
+                WHERE U.UrunAktif = 1 AND U.UrunSilme = 0
+            """
+            cursor.execute(stock_query)
+            stock_rows = cursor.fetchall()
+            for r in stock_rows:
+                bc = str(r[0]).strip() if r[0] else None
+                if bc:
+                    stock_map[bc] = (float(r[1]) if r[1] is not None else 0.0, float(r[2]) if r[2] is not None else 0.0)
+            print(f"Loaded stock levels for {len(stock_map)} active products.")
+        except Exception as stock_err:
+            print(f"Warning: Could not fetch fresh stock levels: {stock_err}", file=sys.stderr)
+            
     except Exception as query_err:
         print(f"Error executing database query: {query_err}", file=sys.stderr)
         sys.exit(1)
@@ -196,10 +220,24 @@ def main():
                         df_final = pd.concat([df_old, df_new])
                         print(f"Merged {len(df_new)} new/updated records with {len(df_old)} existing records.")
                     except Exception as merge_err:
-                        print(f"Warning: Old data could not be merged: {merge_err}. Starting fresh.")
-                        df_final = df_new
+                         print(f"Warning: Old data could not be merged: {merge_err}. Starting fresh.")
+                         df_final = df_new
                 else:
                     df_final = df_new
+                
+                if stock_map:
+                    import numpy as np
+                    print("Updating merged data with fresh stock and price levels...")
+                    df_final['barkod_str'] = df_final['barkod'].astype(str).str.split('.').str[0].str.strip()
+                    
+                    stok_vals = df_final['barkod_str'].map(lambda x: stock_map[x][0] if x in stock_map else None).values
+                    df_final['stok_adet'] = np.where(pd.notna(stok_vals), stok_vals, df_final['stok_adet'].values)
+                    
+                    price_vals = df_final['barkod_str'].map(lambda x: stock_map[x][1] if x in stock_map else None).values
+                    df_final['lokal_psf'] = np.where(pd.notna(price_vals), price_vals, df_final['lokal_psf'].values)
+                    
+                    df_final.drop(columns=['barkod_str'], inplace=True)
+                    print("Stock and price levels updated in final merged data.")
                     
                 df_final.to_parquet(parquet_file, index=False)
                 print(f"Saved merged parquet to {parquet_file}")

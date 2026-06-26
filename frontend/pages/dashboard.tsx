@@ -19,6 +19,7 @@ import KardesEczanePage from '@/components/KardesEczane';
 import Depolar from '@/components/Depolar';
 import CategoryManager from '@/components/CategoryManager';
 import IadelerPage from '@/components/Iadeler';
+import PsfKontrolPage from '@/components/PsfKontrol';
 import ProductDbModal from '@/components/ProductDbModal';
 import DatabaseManager from '@/components/DatabaseManager';
 
@@ -30,7 +31,7 @@ import {
   Copy, ShoppingCart, BarChart2, Check, ChevronDown, Calendar, Brain,
   DollarSign, ClipboardList, X, TrendingUp, RefreshCw, MoreVertical, EyeOff, Zap, Download, Layers, Sparkles, ChevronRight, Info,
   ListX, RotateCcw, PackageX, Star, ArrowRight, Pill, FlaskConical, Trash2,
-  Building2, Users, Wrench, Settings, Menu, Truck, Database
+  Building2, Users, Wrench, Settings, Menu, Truck, Database, Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from "clsx";
@@ -430,6 +431,44 @@ function KategoriFiltreBar({
   );
 }
 
+const parsePriceLocal = (val: any): number => {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const str = String(val).trim();
+  
+  // Eğer hem nokta hem virgül varsa
+  if (str.includes('.') && str.includes(',')) {
+    const dotIdx = str.indexOf('.');
+    const commaIdx = str.indexOf(',');
+    if (commaIdx > dotIdx) {
+      // Türkçe format: 1.170,50 -> Noktaları sil, virgülü nokta yap
+      return parseFloat(str.replace(/\./g, '').replace(',', '.')) || 0;
+    } else {
+      // İngilizce format: 1,170.50 -> Virgülleri sil
+      return parseFloat(str.replace(/,/g, '')) || 0;
+    }
+  }
+  
+  // Sadece virgül varsa (örn: 123,45)
+  if (str.includes(',')) {
+    return parseFloat(str.replace(',', '.')) || 0;
+  }
+  
+  // Sadece nokta varsa (örn: 123.45)
+  if (str.includes('.')) {
+    const parts = str.split('.');
+    const lastPart = parts[parts.length - 1];
+    if (lastPart.length === 2 || lastPart.length === 4 || lastPart.length === 1 || lastPart.length === 3) {
+      return parseFloat(str) || 0;
+    } else {
+      // Binlik ayırıcıdır: 1.120 -> 1120
+      return parseFloat(str.replace(/\./g, '')) || 0;
+    }
+  }
+  
+  return parseFloat(str) || 0;
+};
+
 export default function OrderCockpit() {
   const router = useRouter();
   const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
@@ -486,6 +525,25 @@ export default function OrderCockpit() {
 
   useEffect(() => {
     loadDbCategories();
+    // Webview preload script yolunu yükle
+    async function loadPreload() {
+      try {
+        if ((window as any).go?.main?.App?.GetWebviewPreloadPath) {
+          const p = await (window as any).go.main.App.GetWebviewPreloadPath();
+          setPreloadPath(p);
+        } else if ((window as any).electronAPI?.invoke) {
+          const p = await (window as any).electronAPI.invoke('wails:GetWebviewPreloadPath');
+          setPreloadPath(p);
+        } else if (typeof window !== 'undefined' && (window as any).require) {
+          const { ipcRenderer } = (window as any).require('electron');
+          const p = await ipcRenderer.invoke('wails:GetWebviewPreloadPath');
+          setPreloadPath(p);
+        }
+      } catch (err) {
+        console.error('Error fetching webview preload path:', err);
+      }
+    }
+    loadPreload();
   }, []);
 
   const getDynamicBreadcrumb = (id: number) => {
@@ -577,6 +635,31 @@ export default function OrderCockpit() {
   const [visibleGroupsCount, setVisibleGroupsCount] = useState(20);
   const [filterEsdegersiz, setFilterEsdegersiz] = useState<'active' | 'passive' | 'excluded'>('active');
   const [selectedDaysLimit, setSelectedDaysLimit] = useState<number | null>(30);
+  
+  // ✨ AI Sipariş Modu State'leri
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiTargetDays, setAiTargetDays] = useState<number>(7);
+  const [aiMaxDays, setAiMaxDays] = useState<number>(30);
+  const [aiSimulating, setAiSimulating] = useState(false);
+  const [aiProgress, setAiProgress] = useState('');
+  const [aiResults, setAiResults] = useState<any[]>([]);
+  const [preloadPath, setPreloadPath] = useState('');
+  const [aiExcludeEnteral, setAiExcludeEnteral] = useState<boolean>(false);
+  const [aiExcludeTnf, setAiExcludeTnf] = useState<boolean>(false);
+  const [aiExcludeIlacDisi, setAiExcludeIlacDisi] = useState<boolean>(false);
+  const [aiOnlyPharmaceuticalAndNoEquivalent, setAiOnlyPharmaceuticalAndNoEquivalent] = useState<boolean>(false);
+  const [aiSimulationWarehouse, setAiSimulationWarehouse] = useState<'as' | 'gek'>('as');
+  const [appSettings, setAppSettings] = useState<any>({
+    eczane_adi: "",
+    gln: "",
+    software: "Botanik",
+    server_instance: "",
+    database: "",
+    auto_scan_9am: false,
+    scan_before_simulation: false,
+    auto_scan_24h: false,
+    default_ai_order_mode: false,
+  });
 
   const getDaysUntilMonthEnd = () => {
     const now = new Date();
@@ -586,6 +669,7 @@ export default function OrderCockpit() {
 
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const cartSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sharedWebviewRefs = useRef<Record<string, any>>({});
   const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
   const [selectedAnalysis, setSelectedAnalysis] = useState<any | null>(null);
   const [modalQty, setModalQty] = useState<number>(0);
@@ -697,15 +781,7 @@ export default function OrderCockpit() {
     setCart(newCart);
   };
 
-  const handleSelectAllVisible = () => {
-    const list = filteredGroups;
-    const allVisibleBarkods = list.flatMap((g: any) => g.detaylar.map((u: any) => u.v1));
-    setSelectedBarkods(prev => {
-      const next = new Set(prev);
-      allVisibleBarkods.forEach(b => next.add(b));
-      return next;
-    });
-  };
+
 
   const handleClearSelection = () => setSelectedBarkods(new Set());
 
@@ -730,6 +806,957 @@ export default function OrderCockpit() {
       grupBarkodları.forEach(b => { if (hepsiSecili) next.delete(b); else next.add(b); });
       return next;
     });
+  };
+
+  // ✨ AI Sipariş Modu Fonksiyonları
+  const runAISimulation = async () => {
+    const gln = data?.gln || 'local';
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // B. Her simülasyon öncesi değişen satırlar için tarama yapsın
+    if (appSettings.scan_before_simulation) {
+      setSyncStatusMsg("Simülasyon öncesi değişen satırlar taranıyor...");
+      try {
+        await (window as any).go.main.App.TriggerSyncAndAnalysis(gln, false);
+        // reload data after scan
+        const res = await fetchEczaneData("");
+        if (res) setData(res);
+      } catch (err) {
+        console.error("Incremental scan before simulation failed:", err);
+      }
+      setSyncStatusMsg("");
+    }
+
+    // SQLite Veritabanı Güncelleme Yardımıcısı
+    const updateDbWithLiveDataLocal = async (barcode: string, dsf: number, psf: number, mfList: string[]) => {
+      try {
+        const dbMfBaremleri: { ana: number; mf: number }[] = [];
+        const parseMfBarem = (mfStr: string | null | undefined) => {
+          if (!mfStr) return null;
+          const clean = mfStr.trim();
+          if (!clean.includes('+')) return null;
+          const parts = clean.split('+');
+          if (parts.length < 2) return null;
+          const ana = parseInt(parts[0]);
+          const mf = parseInt(parts[1]);
+          if (isNaN(ana) || isNaN(mf)) return null;
+          if (mf <= 0) return null; // xx+0 mf değildir
+          return { ana, mf };
+        };
+
+        mfList.forEach(rawMf => {
+          const parsed = parseMfBarem(rawMf);
+          if (parsed) dbMfBaremleri.push(parsed);
+        });
+
+        const mfBaremleriStr = JSON.stringify(dbMfBaremleri);
+
+        if ((window as any).go?.main?.App?.RunCategoryAction) {
+          await (window as any).go.main.App.RunCategoryAction(
+            "update-live-data",
+            JSON.stringify({
+              barcode,
+              data: {
+                dsf: dsf,
+                psf: psf,
+                mf_baremleri: mfBaremleriStr
+              }
+            })
+          );
+        }
+      } catch (err) {
+        console.error(`[AI Database Update] ${barcode} güncelleme hatası:`, err);
+      }
+    };
+
+    // Ömür Hesaplama Yardımcısı
+    const getGroupLifetimeLocal = (g: any) => {
+      const isEquivalent = (g.original_count ?? g.detaylar.length) > 1;
+      const det = isEquivalent ? (g.original_detaylar || g.detaylar || []) : (g.detaylar || []);
+      if (isEquivalent) {
+        const totalStock = det.reduce((acc: number, u: any) => acc + (Number(u.v4) || 0), 0);
+        const totalDailySpeed = det.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0);
+        if (totalDailySpeed <= 0) return 999999;
+        return totalStock / totalDailySpeed;
+      } else {
+        const urun = det[0];
+        if (!urun) return 999999;
+        const stock = Number(urun.v4) || 0;
+        const dailySpeed = Number(urun.v20) || 0;
+        if (dailySpeed <= 0) return 999999;
+        return stock / dailySpeed;
+      }
+    };
+
+    // 1. Önbelleği (cache) yükle
+    let cache: Record<string, any> = {};
+    try {
+      if ((window as any).go?.main?.App?.LoadLocalJSON) {
+        // Seçili depoya göre sipariş geçmişini yükle
+        const orderFile = aiSimulationWarehouse === 'gek' ? 'gek_siparisler.json' : 'as_siparisler.json';
+        const rawSiparisler = await (window as any).go.main.App.LoadLocalJSON(gln, orderFile);
+        if (rawSiparisler && rawSiparisler !== '{}') {
+          const parsed = JSON.parse(rawSiparisler);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((entry: any) => {
+              if (entry.barkod && entry.tarih && entry.durum === 'success') {
+                const dateStr = entry.tarih.includes('T') ? entry.tarih.split('T')[0] : entry.tarih;
+                const mf_baremleri = [entry.mf1, entry.mf2, entry.mf3].filter(Boolean) as string[];
+                // net_fiyatlar: sayısal değerleri string'e çevir, 0 olanları filtrele
+                const net_fiyatlar = [entry.net_fiyat1, entry.net_fiyat2, entry.net_fiyat3]
+                  .filter(val => val && Number(val) > 0)
+                  .map(val => String(val));
+
+                cache[entry.barkod] = {
+                  date: dateStr,
+                  stok: entry.stok_durumu || 0,
+                  fiyat_depocu: entry.fiyat_depocu || 0,
+                  fiyat_etiket: entry.fiyat_etiket || 0,
+                  mf_baremleri: mf_baremleri,
+                  net_fiyatlar: net_fiyatlar,
+                  kod: entry.urun_kodu || '',
+                  depo: entry.depo || (aiSimulationWarehouse === 'gek' ? 'GEK' : 'AS ECZA')
+                };
+              }
+            });
+          }
+        }
+        
+        // Ardından sorgu önbelleğini yükle
+        const cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : 'as_ecza_query_cache.json';
+        const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
+        if (cacheStr && cacheStr !== '{}') {
+          const legacyCache = JSON.parse(cacheStr);
+          Object.keys(legacyCache).forEach(barcode => {
+            cache[barcode] = legacyCache[barcode];
+          });
+        }
+      }
+    } catch (e) {
+      console.log("[AI Order] Önbellek yüklenemedi, yeni oluşturulacak:", e);
+    }
+
+    // 2. Simüle edilecek grupları topla (önerilen veya hızı olan)
+    const groupsToSimulate = filteredGroups.filter((g: any) => {
+      // Kriter 3: Sadece seçilen gün sayısı ve altında ömre sahip olan ilaçlar değerlendirilsin
+      const localLifetime = getGroupLifetimeLocal(g);
+      if (localLifetime > aiTargetDays) return false;
+
+      // Sadece ilaç ve eşdeğersiz kontrolü
+      if (aiOnlyPharmaceuticalAndNoEquivalent) {
+        const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
+        const isEsdegersiz = g.detaylar.length === 1;
+        if (!isPharmaceutical || !isEsdegersiz) return false;
+      }
+
+      const isEquivalent = (g.original_count ?? g.detaylar.length) > 1;
+      const det = isEquivalent ? (g.original_detaylar || g.detaylar || []) : (g.detaylar || []);
+      const totalDailySpeed = det.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0);
+      return g.toplam_oneri > 0 || totalDailySpeed > 0;
+    });
+
+    if (groupsToSimulate.length === 0) {
+      alert(`${aiTargetDays} gün ve altında ömre sahip sipariş önerisi bulunamadı.`);
+      return;
+    }
+
+    // Kriter 2: Enteral ve TNF ürünlerini hariç tutma kontrolleri
+    const isProductTnf = (urun: any) => {
+      return urun.kategori_id === 15 || (urun.kategori_id && dynamicCategoryMap[urun.kategori_id]?.tam_yol_ids?.includes(15)) || false;
+    };
+    const isProductEnteral = (urun: any) => {
+      return urun.kategori_id === 14 || (urun.kategori_id && dynamicCategoryMap[urun.kategori_id]?.tam_yol_ids?.includes(14)) || false;
+    };
+
+    // Her grubun lider/ana ürünü üzerinden sorgu listesi oluştur
+    const productsToQuery = groupsToSimulate.map((g: any) => {
+      const urun = g.detaylar[0];
+      return {
+        barcode: urun?.v1,
+        ad: urun?.v2,
+        grup: g,
+        isTnf: urun ? isProductTnf(urun) : false,
+        isEnteral: urun ? isProductEnteral(urun) : false,
+        isPharmaceutical: urun ? isDynamicPharmaceuticalCategory(g.kategori_id || 0) : false
+      };
+    }).filter(p => {
+      if (!p.barcode) return false;
+      if (aiExcludeEnteral && p.isEnteral) return false;
+      if (aiExcludeTnf && p.isTnf) return false;
+      if (aiExcludeIlacDisi && !p.isPharmaceutical) return false;
+      return true;
+    });
+
+    if (productsToQuery.length === 0) {
+      alert("Seçilen kriterlere ve filtrelere uygun ürün bulunamadı.");
+      return;
+    }
+
+    // 3. Aktif depo webview referansını tarayıp bul
+    let hiddenWebview: any = null;
+    const targetDomain = aiSimulationWarehouse === 'gek' ? 'gek.org.tr' : 'asecza.com.tr';
+    const warehouseName = aiSimulationWarehouse === 'gek' ? 'Güney Ecza (GEK)' : 'AS Ecza';
+
+    for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
+      if (el && typeof el.executeJavaScript === 'function') {
+        try {
+          const url: string = await el.executeJavaScript('location.href');
+          if (url.includes(targetDomain) || (aiSimulationWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis'))) {
+            hiddenWebview = el;
+            break;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    if (!hiddenWebview) {
+      alert(`${warehouseName} oturumu bulunamadı. Lütfen önce 'Depolar' sekmesinden ${warehouseName}'yı açıp giriş yapın.`);
+      return;
+    }
+
+    // GEK webview hâlâ irj/portal/'daysa FrameWorkT1'e navigate et
+    // (API istekleri Referer: FrameWorkT1/'dan gelmesi gerekiyor)
+    if (aiSimulationWarehouse === 'gek') {
+      try {
+        const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
+        if (currentUrl.includes('irj/portal') && !currentUrl.includes('FrameWorkT1')) {
+          hiddenWebview.loadURL('https://esube.gek.org.tr/FrameWorkT1/');
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => resolve(), 8000);
+            const checkReady = setInterval(async () => {
+              try {
+                const url: string = await hiddenWebview.executeJavaScript('location.href');
+                if (url.includes('FrameWorkT1')) {
+                  clearInterval(checkReady);
+                  clearTimeout(timeout);
+                  setTimeout(() => resolve(), 2000);
+                }
+              } catch {}
+            }, 500);
+          });
+        }
+      } catch {}
+    }
+
+    if (aiSimulationWarehouse === 'gek' && hiddenWebview) {
+      try {
+        const debugData = await hiddenWebview.executeJavaScript(`
+          (async function() {
+            try {
+              const res = {
+                href: location.href,
+                __gekToken: window.__gekToken || null,
+                localStorage: {},
+                sessionStorage: {},
+                cookies: document.cookie
+              };
+              try {
+                for (let i = 0; i < localStorage.length; i++) {
+                  const k = localStorage.key(i);
+                  res.localStorage[k] = localStorage.getItem(k);
+                }
+              } catch(e) { res.localStorageError = String(e); }
+              try {
+                for (let i = 0; i < sessionStorage.length; i++) {
+                  const k = sessionStorage.key(i);
+                  res.sessionStorage[k] = sessionStorage.getItem(k);
+                }
+              } catch(e) { res.sessionStorageError = String(e); }
+              return res;
+            } catch(e) {
+              return { error: String(e) };
+            }
+          })()
+        `);
+        await (window as any).go.main.App.SaveLocalJSON(gln, "gek_debug.json", JSON.stringify(debugData, null, 2));
+      } catch(de) {
+        console.error("Debug write failed", de);
+      }
+    }
+
+    // Oturum kontrolü yap (Eğer cache'ten okunmayacak ürünler varsa kontrol önemli)
+    const hasUncached = productsToQuery.some(p => !cache[p.barcode] || cache[p.barcode].date !== todayStr);
+    if (hasUncached) {
+      try {
+        const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
+        const isLoginRequired = currentUrl.includes('/Login.aspx') || currentUrl.includes('login.aspx');
+        if (isLoginRequired) {
+          alert(`${warehouseName} oturumunuz sonlanmış veya giriş yapılmamış. Lütfen 'Depolar' sekmesinden ${warehouseName}'ya giriş yapın.`);
+          return;
+        }
+      } catch (err) {
+        alert(`${warehouseName} durum kontrolü başarısız oldu: ` + String(err));
+        return;
+      }
+    }
+
+    setAiSimulating(true);
+    setAiResults([]);
+
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const results: any[] = [];
+
+
+
+    // Span etiketlerini temizleme
+    const extractSpansLocal = (htmlStr: string): string[] => {
+      if (!htmlStr) return [];
+      const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
+      if (!matches) return [];
+      return matches.map(m => m.replace(/<\/?span>/g, '').trim());
+    };
+
+    for (let i = 0; i < productsToQuery.length; i++) {
+      const item = productsToQuery[i];
+      const barcode = item.barcode;
+      const name = item.ad;
+      const group = item.grup;
+
+      setAiProgress(`Canlı veriler kontrol ediliyor [${i + 1}/${productsToQuery.length}]: ${name}`);
+
+      try {
+        const cached = cache[barcode];
+        let detail: any = null;
+        let mfList: string[] = [];
+        let netList: string[] = [];
+        let dsfVal = 0;
+        let psfVal = 0;
+        let isFromCache = false;
+
+        // Kriter 4: Bir gün içinde bir barkod depodan sadece bir kez sorgulanabilir.
+        if (cached && cached.date === todayStr) {
+          isFromCache = true;
+          dsfVal = cached.fiyat_depocu;
+          psfVal = cached.fiyat_etiket;
+          mfList = cached.mf_baremleri || [];
+          netList = cached.net_fiyatlar || [];
+          detail = {
+            stokDurumu: cached.stok,
+            depocuFiyati: dsfVal,
+            SonFiyat: psfVal,
+            ad: name,
+            kod: cached.kod || ''
+          };
+          console.log(`[AI Cache] ${barcode} önbellekten yüklendi.`);
+        } else {
+          // Önbellekte yoksa, canlı sorgu atıyoruz
+          const barcodeJson = JSON.stringify(barcode);
+
+          if (aiSimulationWarehouse === 'gek') {
+            // GEK Canlı Sorgu
+            const localGekToken = (typeof window !== 'undefined' ? localStorage.getItem('nexus_gek_token') : '') || '';
+            const queryResult: any = await hiddenWebview.executeJavaScript(`
+              (async function() {
+                try {
+                  let token = window.__gekToken || ${JSON.stringify(localGekToken)} || "";
+                  if (!token) {
+                    const stores = [window.localStorage, window.sessionStorage];
+                    const keys = ['token','Token','TOKEN','gek_token','gekToken','accessToken','access_token','auth_token','authToken','jwt','JWT'];
+                    for (const store of stores) {
+                      if (token) break;
+                      if (!store) continue;
+                      for (const k of keys) {
+                        try {
+                          const v = store.getItem(k);
+                          if (v && v.length > 10 && !v.startsWith('{')) { token = v; break; }
+                          if (v && v.length > 10) {
+                            try { const j = JSON.parse(v); const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token; if(t) { token = t; break; } } catch {}
+                          }
+                        } catch {}
+                      }
+                      if (token) break;
+                      try {
+                        for (let i = 0; i < store.length; i++) {
+                          const k = store.key(i);
+                          if (!k) continue;
+                          const v = store.getItem(k);
+                          if (!v) continue;
+                          if (v.length > 10 && !v.startsWith('{') && (k.toLowerCase().includes('token') || k.toLowerCase().includes('auth') || k.toLowerCase().includes('jwt'))) {
+                            token = v;
+                            break;
+                          }
+                          try { 
+                            const j = JSON.parse(v); 
+                            const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token; 
+                            if(t && String(t).length > 10) { token = String(t); break; }
+                          } catch {}
+                        }
+                      } catch {}
+                    }
+                  }
+                  if (!token) {
+                    try {
+                      const cookies = document.cookie.split(';');
+                      for (const c of cookies) {
+                        const [k, v] = c.trim().split('=');
+                        if (k && ['token','Token','TOKEN','auth','jwt'].some(kk => k.toLowerCase().includes(kk))) {
+                          if (v && v.length > 10) { token = decodeURIComponent(v); break; }
+                        }
+                      }
+                    } catch {}
+                  }
+                  if (!token) {
+                    // Son çare: session cookie ile /gt endpoint'inden token al
+                    // (eklentinin yaptığı gibi — kullanıcı login olmuşsa cookie var)
+                    try {
+                      const gtResp = await fetch('https://esube.gek.org.tr/MainService/api/rfc/gt', {
+                        method: 'GET',
+                        headers: { 'accept': 'application/json;charset=UTF-8' },
+                        credentials: 'include'
+                      });
+                      if (gtResp.ok) {
+                        let gtData = null;
+                        try { gtData = await gtResp.json(); } catch { gtData = null; }
+                        const tok = gtData && (gtData.token || gtData.Token || gtData.TOKEN || gtData.accessToken || gtData.access_token || (gtData.response && (gtData.response.token || gtData.response.Token)));
+                        if (tok && String(tok).length > 10) {
+                          token = String(tok);
+                        }
+                      }
+                    } catch {}
+                  }
+                  if (!token) {
+                    // /gt de başarısız → /al endpoint'ini dene (alternatif GEK token endpoint)
+                    try {
+                      const alResp = await fetch('https://esube.gek.org.tr/MainService/api/rfc/al', {
+                        method: 'POST',
+                        headers: { 'accept': 'application/json;charset=UTF-8', 'content-type': 'application/json' },
+                        credentials: 'include',
+                        body: '{}'
+                      });
+                      if (alResp.ok) {
+                        let alData = null;
+                        try { alData = await alResp.json(); } catch { alData = null; }
+                        const tok2 = alData && (alData.token || alData.Token || alData.TOKEN || alData.accessToken || alData.access_token);
+                        if (tok2 && String(tok2).length > 10) token = String(tok2);
+                      }
+                    } catch {}
+                  }
+                  if (token) {
+                    window.__gekToken = token;
+                  } else {
+                    return { error: 'login_required' };
+                  }
+                  
+                  // 1. Arama Hazırlığı (ss)
+                  const ssUrl = 'https://esube.gek.org.tr/MainService/api/rfc/mat/ss?ST=' + encodeURIComponent(${barcodeJson});
+                  await fetch(ssUrl, {
+                    method: 'GET',
+                    headers: { 'accept': 'application/json;charset=UTF-8', 'TOKEN': token, 'sln': '1' },
+                    credentials: 'include'
+                  }).catch(() => {});
+
+                  // 2. Arama
+                  const searchUrl = 'https://esube.gek.org.tr/MainService/api/rfc/mat/sm?ST=' + encodeURIComponent(${barcodeJson}) + '&TYP=3';
+                  let searchResp = await fetch(searchUrl, {
+                    method: 'GET',
+                    headers: { 'accept': 'application/json;charset=UTF-8', 'TOKEN': token, 'sln': '1' },
+                    credentials: 'include'
+                  });
+                  // Token süresi dolmuşsa /gt'den yenile ve tekrar dene
+                  if (searchResp.status === 401 || searchResp.status === 403) {
+                    try {
+                      const gtR = await fetch('https://esube.gek.org.tr/MainService/api/rfc/gt', {
+                        method: 'GET',
+                        headers: { 'accept': 'application/json;charset=UTF-8' },
+                        credentials: 'include'
+                      });
+                      if (gtR.ok) {
+                        let gd = null;
+                        try { gd = await gtR.json(); } catch {}
+                        const nt = gd && (gd.token || gd.Token || gd.TOKEN || gd.accessToken || gd.access_token || (gd.response && (gd.response.token || gd.response.Token)));
+                        if (nt && String(nt).length > 10) {
+                          token = String(nt);
+                          window.__gekToken = token;
+                          
+                          // Yeni token ile ss çağrısı
+                          await fetch(ssUrl, {
+                            method: 'GET',
+                            headers: { 'accept': 'application/json;charset=UTF-8', 'TOKEN': token, 'sln': '1' },
+                            credentials: 'include'
+                          }).catch(() => {});
+
+                          // Yenilenen token ile tekrar dene
+                          searchResp = await fetch(searchUrl, {
+                            method: 'GET',
+                            headers: { 'accept': 'application/json;charset=UTF-8', 'TOKEN': token, 'sln': '1' },
+                            credentials: 'include'
+                          });
+                        }
+                      }
+                    } catch {}
+                  }
+                  if (searchResp.status === 500) return { error: 'not_found' };
+                  if (searchResp.status === 401 || searchResp.status === 403) return { error: 'login_required' };
+                  if (!searchResp.ok) return { error: 'search_http_' + searchResp.status };
+                  const searchData = await searchResp.json();
+                  const items = searchData && Array.isArray(searchData.ET_MAKTX) ? searchData.ET_MAKTX : [];
+                  if (items.length === 0) return { error: 'not_found' };
+                  
+                  const matnr = String(items[0].MATNR);
+                  const name = String(items[0].MAKTX || '');
+                  
+                  // 2. Detay Çekme
+                  const detailUrl = 'https://esube.gek.org.tr/MainService/api/rfc/mat/ms?MATNR=' + encodeURIComponent(matnr);
+                  const detailResp = await fetch(detailUrl, {
+                    method: 'POST',
+                    headers: {
+                      'accept': 'application/json;charset=UTF-8',
+                      'content-type': 'application/json',
+                      'TOKEN': token,
+                      'sln': '1'
+                    },
+                    credentials: 'include',
+                    body: '{}'
+                  });
+                  if (!detailResp.ok) return { error: 'detail_http_' + detailResp.status };
+                  const detailData = await detailResp.json();
+                  return { ok: true, matnr, name, detailData };
+                } catch(e) {
+                  return { error: String(e && e.message ? e.message : e) };
+                }
+              })()
+            `);
+
+            if (queryResult.error) {
+              throw new Error(queryResult.error === 'not_found' ? 'Ürün Bulunamadı' : queryResult.error);
+            }
+
+            if ((window as any).go?.main?.App?.SaveLocalJSON) {
+              await (window as any).go.main.App.SaveLocalJSON(gln, "gek_detail_debug.json", JSON.stringify({
+                barcode,
+                queryResult
+              }, null, 2));
+            }
+
+            const detailData = queryResult.detailData;
+            
+            // Stok ve Fiyatları parse et
+            const conds = detailData?.ET_A004 || [];
+            const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
+            const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
+            
+            let tmpPsf = 0;
+            let tmpDsf = 0;
+            if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
+            if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
+            
+            if (!tmpPsf) tmpPsf = parseFloat(conds[0]?.KBETR) || parseFloat(detailData?.PSF) || 0;
+            if (!tmpDsf) tmpDsf = parseFloat(detailData?.DSF) || tmpPsf * 0.83;
+
+            psfVal = tmpPsf;
+            dsfVal = tmpDsf;
+
+            const rawStok = detailData?.ET_MARC?.[0]?.LABST ?? detailData?.LABST ?? 0;
+            const stokVal = typeof rawStok === 'number' ? rawStok : parseInt(rawStok || 0);
+
+            // GEK Kampanya (MF) baremleri
+            const campaigns = detailData?.ET_KAMPANYA || detailData?.ET_KOMP || [];
+            campaigns.forEach((c: any) => {
+              if (c.MF) mfList.push(c.MF);
+              if (c.NET) netList.push(String(c.NET));
+            });
+
+            // Canlı sorguyu önbelleğe yazıyoruz
+            cache[barcode] = {
+              date: todayStr,
+              stok: stokVal,
+              fiyat_depocu: dsfVal,
+              fiyat_etiket: psfVal,
+              mf_baremleri: mfList,
+              net_fiyatlar: netList,
+              kod: queryResult.matnr || '',
+              depo: 'GEK'
+            };
+
+            if ((window as any).go?.main?.App?.SaveLocalJSON) {
+              await (window as any).go.main.App.SaveLocalJSON(gln, "gek_query_cache.json", JSON.stringify(cache));
+            }
+
+            // Canlı sorgulanan veriler veritabanını güncellemede kullanılır
+            await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
+
+            // GEK Sipariş log kaydı yazılır
+            try {
+              const qtyInCart = cart[barcode]?.qty || 0;
+              const entry = {
+                tarih:        todayStr,
+                barkod:       barcode,
+                urun_adi:     name,
+                miktar:       qtyInCart,
+                urun_kodu:    queryResult.matnr || '',
+                fiyat_etiket: +psfVal.toFixed(2),
+                fiyat_depocu: +dsfVal.toFixed(2),
+                mf1:          mfList[0]  || null,
+                mf2:          mfList[1]  || null,
+                mf3:          mfList[2]  || null,
+                net_fiyat1:   parsePriceLocal(netList[0]),
+                net_fiyat2:   parsePriceLocal(netList[1]),
+                net_fiyat3:   parsePriceLocal(netList[2]),
+                stok_durumu:  stokVal,
+                kdv:          1,
+                firma_adi:    "",
+                urun_tipi:    "Itriyat",
+                durum:        'success',
+                depo:         'GEK'
+              };
+
+              const rawGek = await (window as any).go.main.App.LoadLocalJSON(gln, 'gek_siparisler.json');
+              let gekList = [];
+              if (rawGek && rawGek !== '{}') {
+                try {
+                  const parsed = JSON.parse(rawGek);
+                  if (Array.isArray(parsed)) gekList = parsed;
+                } catch {}
+              }
+              gekList.push(entry);
+              await (window as any).go.main.App.SaveLocalJSON(gln, 'gek_siparisler.json', JSON.stringify(gekList, null, 2));
+
+            } catch (jsonErr) {
+              console.error('[AI Order GEK Log] Hata:', jsonErr);
+            }
+
+            detail = {
+              stokDurumu: stokVal,
+              depocuFiyati: dsfVal,
+              SonFiyat: psfVal,
+              ad: name,
+              kod: queryResult.matnr || ''
+            };
+
+          } else {
+            // A. Ürün Arama (AS Ecza)
+            const searchResult: any = await hiddenWebview.executeJavaScript(`
+              (async function() {
+                try {
+                  const params = new URLSearchParams({
+                    action: 'GetUrunler', searchText: ${barcodeJson},
+                    isInculude: 'false', isStoktakiler: 'false', siralama: 'ilacASC',
+                    marka: '', baslangicSayfasi: '0', topRowNum: '0', sayfaMaxRowAdet: '20', s: 's'
+                  });
+                  const resp = await fetch('/Siparis/hizlisiparis-ajax.aspx', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                    credentials: 'include',
+                    body: params.toString()
+                  });
+                  if (!resp.ok) return { error: 'search_http_' + resp.status };
+                  const data = await resp.json();
+                  if (data.hataId === 9 || String(data.hataId) === '9') return { error: 'login_required' };
+                  if (data.hataId !== 0) return { error: data.hataStr || 'search_error' };
+                  const urunler = data && data.obj && data.obj.urunler;
+                  if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+                  const u = urunler[0];
+                  return { kod: String(u.kodu || ''), ILACTIP: String(u.ILACTIP || ''), ad: String(u.ad || '') };
+                } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+              })()
+            `);
+
+            if (searchResult.error) {
+              throw new Error(searchResult.error === 'not_found' ? 'Ürün Bulunamadı' : searchResult.error);
+            }
+
+            const { kod, ILACTIP } = searchResult;
+            const kodJson = JSON.stringify(kod);
+            const ilacTipJson = JSON.stringify(ILACTIP);
+
+            await sleep(150);
+
+            // B. Detay & Kampanya Çekme (AS Ecza)
+            const detailResult: any = await hiddenWebview.executeJavaScript(`
+              (async function() {
+                try {
+                  const params = new URLSearchParams({
+                    action: 'GetIlacDetay', kod: ${kodJson},
+                    isEsdeger: 'false', esdeger: '', isJenerik: 'false', jenerikId: '',
+                    tip: 'null', ILACTIP: ${ilacTipJson}, kampKodu: ''
+                  });
+                  const resp = await fetch('/Ilac/IlacGetir-ajax.aspx', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                    credentials: 'include',
+                    body: params.toString()
+                  });
+                  return resp.ok ? await resp.json() : null;
+                } catch { return null; }
+              })()
+            `);
+
+            if (!detailResult || !detailResult.obj) {
+              throw new Error('Detay verisi alınamadı');
+            }
+
+            detail = detailResult.obj;
+            
+            // Tüm kampanya kayıtlarını dolaş: mf alanı boş olmayan ilkini kullan
+            const kampanyalar: any[] = Array.isArray(detail?.grdKampanyalar) ? detail.grdKampanyalar : [];
+            let mfRaw = '';
+            let netRaw = '';
+            for (const kamp of kampanyalar) {
+              if (camp?.mf && String(kamp.mf).trim().length > 0) { // Note: original used kamp.mf but check loop var
+                mfRaw  = kamp.mf;
+                netRaw = kamp.netFiyat || '';
+                break;
+              }
+            }
+            if (!mfRaw && kampanyalar.length > 0) { // Fallback to first if none matched
+              mfRaw = kampanyalar[0]?.mf || '';
+              netRaw = kampanyalar[0]?.netFiyat || '';
+            }
+            
+            mfList = extractSpansLocal(mfRaw).filter(m => {
+              if (!m) return false;
+              if (m.toLowerCase().endsWith('+0')) return false;
+              return true;
+            });
+            netList = extractSpansLocal(netRaw);
+
+            dsfVal = parsePriceLocal(detail.depocuFiyati);
+            psfVal = parsePriceLocal(detail.tavsiyeEdilenSatisFiyati || detail.SonFiyat || detail.etiketFiyati);
+
+            // Canlı sorguyu önbelleğe yazıyoruz
+            cache[barcode] = {
+              date: todayStr,
+              stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
+              fiyat_depocu: dsfVal,
+              fiyat_etiket: psfVal,
+              mf_baremleri: mfList,
+              net_fiyatlar: netList,
+              kod: detail.kod || '',
+              depo: 'AS ECZA'
+            };
+
+            if ((window as any).go?.main?.App?.SaveLocalJSON) {
+              await (window as any).go.main.App.SaveLocalJSON(gln, "as_ecza_query_cache.json", JSON.stringify(cache));
+            }
+
+            // Canlı sorgulanan veriler veritabanını güncellemede kullanılır
+            await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
+
+            // Ayrıca veritabanına log kaydı yazılır
+            try {
+              const qtyInCart = cart[barcode]?.qty || 0;
+              const entry = {
+                tarih:        todayStr,
+                barkod:       barcode,
+                urun_adi:     name,
+                miktar:       qtyInCart,
+                urun_kodu:    detail?.kod       || '',
+                fiyat_etiket: +psfVal.toFixed(2),
+                fiyat_depocu: +dsfVal.toFixed(2),
+                mf1:          mfList[0]  || null,
+                mf2:          mfList[1]  || null,
+                mf3:          mfList[2]  || null,
+                net_fiyat1:   parsePriceLocal(netList[0]),
+                net_fiyat2:   parsePriceLocal(netList[1]),
+                net_fiyat3:   parsePriceLocal(netList[2]),
+                stok_durumu:  detail?.stokDurumu || 0,
+                kdv:          parseInt(detail?.kdv?.val1 || 0),
+                firma_adi:    detail?.firma?.display || "",
+                urun_tipi:    detail?.urunTipi || "",
+                durum:        'success',
+                depo:         'AS ECZA'
+              };
+
+              if ((window as any).go?.main?.App?.AppendOrderResult) {
+                await (window as any).go.main.App.AppendOrderResult(gln, entry);
+              }
+            } catch (jsonErr) {
+              console.error('[AI Order Log] Hata:', jsonErr);
+            }
+          }
+        }
+
+        // 3. AI Karar & Barem Optimizasyonu
+        const isEquivalent = (group.original_count ?? group.detaylar.length) > 1;
+        const statsSource = isEquivalent ? (group.original_detaylar || group.detaylar) : group.detaylar;
+
+        const currentGroupStock = statsSource.reduce((acc: number, u: any) => acc + (Number(u.v4) || 0), 0);
+        const groupDailySpeed = statsSource.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0);
+
+        const rawNeed = groupDailySpeed * aiTargetDays - currentGroupStock;
+        const need = Math.max(0, Math.ceil(rawNeed));
+
+        let suggestedQty = 0;
+        let chosenBarem: string | null = null;
+        let chosenNetPrice = dsfVal;
+
+        if (need > 0) {
+          suggestedQty = need; // Varsayılan: Saf İhtiyaç
+
+          if (mfList.length > 0 && groupDailySpeed > 0) {
+            const parsedBarems = mfList.map((m, idx) => {
+              const parts = m.split('+');
+              const ana = parseInt(parts[0]) || 0;
+              const bedava = parseInt(parts[1]) || 0;
+              const netPrice = parsePriceLocal(netList[idx]) || dsfVal * (ana / (ana + bedava));
+              return {
+                raw: m,
+                ana,
+                bedava,
+                netPrice,
+                discount: bedava / (ana + bedava)
+              };
+            }).filter(b => b.ana > 0);
+
+            // Barem alım miktarına göre küçükten büyüğe sırala
+            parsedBarems.sort((a, b) => a.ana - b.ana);
+
+            // En avantajlı ve güvenli baremi seç
+            let bestBarem: any = null;
+            let bestDiscount = -1;
+
+            for (const b of parsedBarems) {
+              const futureStock = currentGroupStock + b.ana + b.bedava;
+              const futureLifetimeDays = futureStock / groupDailySpeed;
+
+              // Maksimum gün sınırına takılmıyorsa
+              if (futureLifetimeDays <= aiMaxDays) {
+                // İhtiyacımızın %70 veya fazlası ise bareme yuvarlamaya değer
+                if (need >= 0.7 * b.ana) {
+                  if (b.discount > bestDiscount) {
+                    bestDiscount = b.discount;
+                    bestBarem = b;
+                  }
+                }
+              }
+            }
+
+            if (bestBarem) {
+              suggestedQty = bestBarem.ana;
+              chosenBarem = bestBarem.raw;
+              chosenNetPrice = bestBarem.netPrice;
+            }
+          }
+        }
+
+        const estFutureLifetime = groupDailySpeed > 0
+          ? Math.round((currentGroupStock + suggestedQty + (chosenBarem ? (parseInt(chosenBarem.split('+')[1]) || 0) : 0)) / groupDailySpeed)
+          : null;
+
+        results.push({
+          barkod: barcode,
+          ad: name,
+          stok: currentGroupStock,
+          hiz: groupDailySpeed * 30, // monthly speed
+          ihtiyac: need,
+          onerilen: suggestedQty,
+          secilenBarem: chosenBarem,
+          yeniOmur: estFutureLifetime,
+          depocuFiyati: dsfVal,
+          netFiyat: chosenBarem ? chosenNetPrice : null,
+          toplamTutar: suggestedQty * dsfVal,
+          isCached: isFromCache,
+          baremler: mfList,
+          netFiyatlar: netList
+        });
+
+      } catch (err) {
+        console.error(`AI simülasyon hatası [${name}]:`, err);
+        results.push({
+          barkod: barcode,
+          ad: name,
+          stok: 0,
+          hiz: 0,
+          ihtiyac: 0,
+          onerilen: 0,
+          secilenBarem: null,
+          yeniOmur: null,
+          depocuFiyati: 0,
+          netFiyat: null,
+          toplamTutar: 0,
+          hata: String(err?.message || err || 'Sorgu Hatası'),
+          baremler: [],
+          netFiyatlar: []
+        });
+      }
+
+      setAiResults([...results]);
+      if (results[results.length - 1].isCached) {
+        // Cache'ten okunduysa bekleme süresini atla
+        await sleep(10);
+      } else {
+        await sleep(150);
+      }
+    }
+
+    setAiSimulating(false);
+    setAiProgress('');
+  };
+
+  const handleBaremSelect = (productBarcode: string, barem: string | null) => {
+    setAiResults(prev => prev.map(item => {
+      if (item.barkod !== productBarcode) return item;
+      
+      const isAlreadySelected = item.secilenBarem === barem;
+      const newBarem = isAlreadySelected ? null : barem;
+      
+      let newQty = item.ihtiyac;
+      let newNetFiyat = item.depocuFiyati;
+      
+      if (newBarem) {
+        const parts = newBarem.split('+');
+        const ana = parseInt(parts[0]) || 0;
+        const bedava = parseInt(parts[1]) || 0;
+        
+        newQty = ana;
+        
+        const idx = item.baremler ? item.baremler.indexOf(newBarem) : -1;
+        if (idx !== -1 && item.netFiyatlar?.[idx]) {
+          newNetFiyat = parsePriceLocal(item.netFiyatlar[idx]);
+        } else {
+          newNetFiyat = item.depocuFiyati * (ana / (ana + bedava));
+        }
+      }
+      
+      const monthlySpeed = item.hiz; // monthly speed (dailySpeed * 30)
+      const dailySpeed = monthlySpeed / 30;
+      const bedavaQty = newBarem ? (parseInt(newBarem.split('+')[1]) || 0) : 0;
+      const estFutureLifetime = dailySpeed > 0
+        ? Math.round((item.stok + newQty + bedavaQty) / dailySpeed)
+        : null;
+        
+      return {
+        ...item,
+        secilenBarem: newBarem,
+        onerilen: newQty,
+        netFiyat: newBarem ? newNetFiyat : null,
+        toplamTutar: newQty * item.depocuFiyati,
+        yeniOmur: estFutureLifetime
+      };
+    }));
+  };
+
+  const handleDeleteResult = (productBarcode: string) => {
+    setAiResults(prev => prev.filter(item => item.barkod !== productBarcode));
+  };
+
+  const handleApplyAISuggestions = () => {
+    const newCart = { ...cart };
+    aiResults.forEach(r => {
+      if (r.onerilen > 0 && !r.hata) {
+        const urun = data?.gruplar?.flatMap((g: any) => g.detaylar).find((u: any) => u.v1 === r.barkod) as any;
+        if (urun) {
+          const parts = r.secilenBarem ? r.secilenBarem.split('+') : null;
+          const bedava = parts ? parseInt(parts[1]) || 0 : 0;
+
+          newCart[r.barkod] = {
+            qty: r.onerilen,
+            mf: bedava,
+            inCart: true,
+            ad: urun.v2,
+            depo: urun.v91 || 'AS ECZA',
+            v95: urun.v95 || null,
+            mf_baremleri: urun.mf_baremleri || []
+          };
+        }
+      }
+    });
+    setCart(newCart);
+    setShowAIModal(false);
+    setToast({ id: Date.now(), message: '✨ AI Önerileri başarıyla sepete eklendi', type: 'success' });
+    setTimeout(() => setToast(null), 4000);
   };
 
   const handleRefresh = async () => {
@@ -884,11 +1911,92 @@ export default function OrderCockpit() {
     };
   }, []);
 
+  // Timer for 9 AM scan
+  useEffect(() => {
+    if (!isWails || !appSettings.gln) return;
+    
+    let lastScanDay = "";
+    
+    const interval = setInterval(async () => {
+      try {
+        const settingsStr = await (window as any).go.main.App.LoadSettings();
+        if (!settingsStr || settingsStr === '{}') return;
+        const parsed = JSON.parse(settingsStr);
+        
+        if (!parsed.auto_scan_9am) return;
+        
+        const now = new Date();
+        const currentDay = now.toDateString(); // e.g. "Fri Jun 26 2026"
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        
+        if (hours === 9 && minutes === 0 && lastScanDay !== currentDay) {
+          lastScanDay = currentDay;
+          console.log("[Auto-Scan] Saat 09:00. Günlük komple tarama tetikleniyor...");
+          await triggerScanBackground(parsed.gln, true);
+        }
+      } catch (e) {
+        console.error("[Auto-Scan] Timer check failed:", e);
+      }
+    }, 60 * 1000); // Check every minute
+    
+    return () => clearInterval(interval);
+  }, [isWails, appSettings.gln, appSettings.auto_scan_9am]);
+
+  const triggerScanBackground = async (gln: string, fullSync: boolean) => {
+    try {
+      console.log(`[Auto-Scan] Background scan running (fullSync=${fullSync})...`);
+      // Trigger sync
+      await (window as any).go.main.App.TriggerSyncAndAnalysis(gln, fullSync);
+      
+      // Update last_full_scan_time if it was a fullSync
+      if (fullSync) {
+        const settingsStr = await (window as any).go.main.App.LoadSettings();
+        if (settingsStr && settingsStr !== '{}') {
+          const parsed = JSON.parse(settingsStr);
+          parsed.last_full_scan_time = new Date().toISOString();
+          await (window as any).go.main.App.SaveSettings(JSON.stringify(parsed));
+          setAppSettings(parsed);
+        }
+      }
+      
+      // Reload dashboard data
+      const res = await fetchEczaneData("");
+      if (res) setData(res);
+    } catch (e) {
+      console.error("[Auto-Scan] Background scan failed:", e);
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
       let res;
       if (isWails) {
+        try {
+          const settingsStr = await (window as any).go.main.App.LoadSettings();
+          if (settingsStr && settingsStr !== '{}') {
+            const parsed = JSON.parse(settingsStr);
+            setAppSettings(parsed);
+            
+            // d- program ilk açıldığında ai sipariş modu açılsın
+            if (parsed.default_ai_order_mode) {
+              setShowAIModal(true);
+            }
+            
+            // c- son komple tarama üzerinden 24 saat geçmişse otomatik komple tarama yapsın
+            if (parsed.auto_scan_24h && parsed.last_full_scan_time) {
+              const lastScan = new Date(parsed.last_full_scan_time).getTime();
+              const now = new Date().getTime();
+              if (now - lastScan > 24 * 60 * 60 * 1000) {
+                console.log("[Auto-Scan] Son komple taramadan bu yana 24 saat geçmiş. Tarama tetikleniyor...");
+                triggerScanBackground(parsed.gln, true);
+              }
+            }
+          }
+        } catch (settingsErr) {
+          console.error("loadData settings error:", settingsErr);
+        }
         res = await fetchEczaneData("");
       } else {
         const { data: { user } } = await supabase.auth.getUser();
@@ -1167,7 +2275,12 @@ export default function OrderCockpit() {
 
           return true;
         });
-        return { ...g, detaylar: filteredDetaylar, original_count: g.detaylar.length };
+        return {
+          ...g,
+          detaylar: filteredDetaylar,
+          original_detaylar: g.detaylar,
+          original_count: g.detaylar.length
+        };
       })
       .filter((g: any) => {
         if (g.detaylar.length === 0) return false;
@@ -1176,6 +2289,9 @@ export default function OrderCockpit() {
         return true;
       })
       .sort((a: any, b: any) => {
+        const detA = a.original_detaylar || a.detaylar || [];
+        const detB = b.original_detaylar || b.detaylar || [];
+
         if (cockpitSortField) {
           let valA: any = 0;
           let valB: any = 0;
@@ -1186,16 +2302,16 @@ export default function OrderCockpit() {
               valB = b.lider_adi || '';
               break;
             case 'hiz':
-              valA = a.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
-              valB = b.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
+              valA = detA.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0) * 30;
+              valB = detB.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0) * 30;
               break;
             case 'stok':
-              valA = a.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
-              valB = b.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
+              valA = detA.reduce((acc: number, u: any) => acc + (Number(u.v4) || 0), 0);
+              valB = detB.reduce((acc: number, u: any) => acc + (Number(u.v4) || 0), 0);
               break;
             case 'iht':
-              valA = a.detaylar.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (u.v20 || 0) * 30 - (u.v4 || 0))), 0);
-              valB = b.detaylar.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (u.v20 || 0) * 30 - (u.v4 || 0))), 0);
+              valA = detA.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (Number(u.v20) || 0) * 30 - (Number(u.v4) || 0))), 0);
+              valB = detB.reduce((acc: number, u: any) => acc + Math.round(Math.max(0, (Number(u.v20) || 0) * 30 - (Number(u.v4) || 0))), 0);
               break;
             case 'oneri':
               valA = a.toplam_oneri || 0;
@@ -1215,6 +2331,41 @@ export default function OrderCockpit() {
         }
 
         if (activeTab === 'ks') return (b.kritik_puan || 0) - (a.kritik_puan || 0);
+
+        // Hibrit sıralama modeli (Karekök Aylık Çıkış Hızı ve Ömür İlişkisi)
+        // Öncelik Puanı (CPI) = (sqrt(Aylık Hız) + 1) / (Kalan Ömür + 10)
+        // Puanı yüksek olan (daha kritik olan) ürünler en üstte listelenir (descending).
+        const getGroupCPI = (g: any) => {
+          const isEquivalent = (g.original_count ?? g.detaylar.length) > 1;
+          const det = isEquivalent ? (g.original_detaylar || g.detaylar || []) : (g.detaylar || []);
+
+          let totalStock = 0;
+          let totalDailySpeed = 0;
+
+          if (isEquivalent) {
+            totalStock = det.reduce((acc: number, u: any) => acc + (Number(u.v4) || 0), 0);
+            totalDailySpeed = det.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0);
+          } else {
+            const urun = det[0];
+            if (urun) {
+              totalStock = Number(urun.v4) || 0;
+              totalDailySpeed = Number(urun.v20) || 0;
+            }
+          }
+
+          const monthlySpeed = totalDailySpeed * 30;
+          const lifetime = totalDailySpeed > 0 ? (totalStock / totalDailySpeed) : 999999;
+
+          return (Math.sqrt(monthlySpeed) + 1) / (lifetime + 10);
+        };
+
+        const cpiA = getGroupCPI(a);
+        const cpiB = getGroupCPI(b);
+
+        if (cpiA !== cpiB) {
+          return cpiB - cpiA; // Yüksek puanlılar üstte
+        }
+
         return (b.toplam_oneri || 0) - (a.toplam_oneri || 0);
       });
   };
@@ -1233,6 +2384,49 @@ export default function OrderCockpit() {
     const vals = Object.values(cart).filter(c => c.inCart && c.qty > 0);
     return { items: vals.length, kutu: vals.reduce((a, c) => a + (c.qty || 0), 0), mf: vals.reduce((a, c) => a + (c.mf || 0), 0) };
   }, [cart]);
+
+  // ── Tümünü Seç (Ana görünüm) ─────────────────────────────────────────────
+  const allMainBarkods = useMemo(() =>
+    filteredGroups.flatMap((g: any) => g.detaylar?.map((u: any) => u.v1) || []),
+  [filteredGroups]);
+
+  const isAllMainSelected = useMemo(() =>
+    allMainBarkods.length > 0 && allMainBarkods.every(b => selectedBarkods.has(b)),
+  [allMainBarkods, selectedBarkods]);
+
+  const handleToggleSelectAllMain = () => {
+    setSelectedBarkods(prev => {
+      const next = new Set(prev);
+      if (isAllMainSelected) {
+        allMainBarkods.forEach(b => next.delete(b));
+      } else {
+        allMainBarkods.forEach(b => next.add(b));
+      }
+      return next;
+    });
+  };
+
+  // ── Tümünü Seç (Genişletilmiş cockpit görünümü) ──────────────────────────
+  const allExpandedBarkods = useMemo(() => {
+    const list = expandedCategory === 'ilac' ? filteredIlacGroups : filteredDisiGroups;
+    return list.flatMap((g: any) => g.detaylar?.map((u: any) => u.v1) || []);
+  }, [expandedCategory, filteredIlacGroups, filteredDisiGroups]);
+
+  const isAllExpandedSelected = useMemo(() =>
+    allExpandedBarkods.length > 0 && allExpandedBarkods.every(b => selectedBarkods.has(b)),
+  [allExpandedBarkods, selectedBarkods]);
+
+  const handleToggleSelectAllExpanded = () => {
+    setSelectedBarkods(prev => {
+      const next = new Set(prev);
+      if (isAllExpandedSelected) {
+        allExpandedBarkods.forEach(b => next.delete(b));
+      } else {
+        allExpandedBarkods.forEach(b => next.add(b));
+      }
+      return next;
+    });
+  };
 
   const isMainView = activeTab === 'oneri';
 
@@ -1264,18 +2458,24 @@ export default function OrderCockpit() {
   // Depolar sekmesi sidebar'ı gizler ve tam ekran açılır
   const isDepolarTab = activeTab === 'depolar';
 
-  if (isDepolarTab) {
-    return (
-      <div className={cn("flex h-screen bg-stone-50 text-stone-900 font-sans overflow-hidden", isWails && "wails-compact")}>
-        <div className="flex-1 overflow-hidden flex flex-col">
-          <Depolar cart={cart} gln={data?.gln || 'local'} onBack={() => setActiveTab('oneri')} />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className={cn("flex min-h-screen bg-stone-50 text-stone-900 font-sans relative", isWails && "wails-compact")}>
+      
+      {/* DEPOLAR PANELİ — Kalıcı Yüklü, unmount edilmez */}
+      <div
+        aria-hidden={!isDepolarTab}
+        className={cn(
+          "fixed inset-0 z-50 bg-stone-50 overflow-hidden flex flex-col transition-all duration-300",
+          isDepolarTab ? "opacity-100 pointer-events-auto visible" : "opacity-0 pointer-events-none invisible"
+        )}
+      >
+        <Depolar 
+          cart={cart} 
+          gln={data?.gln || 'local'} 
+          onBack={() => setActiveTab('oneri')} 
+          webviewRefs={sharedWebviewRefs}
+        />
+      </div>
 
       {/* REFRESH OVERLAY */}
       <AnimatePresence>
@@ -1359,7 +2559,7 @@ export default function OrderCockpit() {
             <SideNavItem id="yok_listesi" icon={ListX} label="Yok Listem" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="red" />
             <SideNavItem id="gozden_kacanlar" icon={EyeOff} label="Gözden Kaçanlar" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="amber" />
             <SideNavItem id="iadeler" icon={RotateCcw} label="İadeler" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="emerald" />
-            {/* <SideNavItemDisabled icon={Star} label="PSF'si Hatalı" /> */}
+            <SideNavItem id="psf_kontrol" icon={Tag} label="PSF Kontrolü" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="yellow" />
             <SideNavItem id="mr" icon={AlertTriangle} label="Miad Riski" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="amber" />
             <SideNavItem id="st" icon={PackageX} label="Stoğu Tükenmiş" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="rose" />
             <SideNavItem id="os" icon={Moon} label="Ölü Stoklar" activeTab={activeTab} onClick={(id: string) => { setActiveTab(id); setSidebarOpen(false); }} accent="slate" />
@@ -1575,19 +2775,21 @@ export default function OrderCockpit() {
                             >
                               {opt.label}
                             </button>
-                          );
-                        })}
-                      </div>
+                        );
+                      })}
+                    </div>
 
-                      <div className="w-px h-5 bg-stone-200 shrink-0" />
+                    {/* AI Sipariş Modu Butonu */}
+                    <button
+                      onClick={() => setShowAIModal(true)}
+                      className="h-8 px-3 rounded-lg text-[11px] font-black bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm hover:shadow-md hover:from-violet-700 hover:to-indigo-700 transition-all flex items-center gap-1.5 shrink-0 select-none"
+                    >
+                      <Sparkles size={12} className="text-white fill-white/25" />
+                      <span>AI Sipariş Modu</span>
+                    </button>
 
-                      <button onClick={handleSelectAllVisible}
-                        className="h-8 px-2.5 text-[11px] font-semibold rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-stone-300 transition-all flex items-center gap-1.5 shrink-0">
-                        <Check size={10} /><span className="whitespace-nowrap">Tümünü Seç</span>
-                      </button>
-
-                      {selectedBarkods.size > 0 && (
-                        <>
+                    {selectedBarkods.size > 0 && (
+                      <>
                           <button onClick={handleBulkAddToCart}
                             className="h-8 px-2.5 text-[11px] font-semibold rounded-lg bg-teal-600 text-white border border-teal-600 hover:bg-teal-700 transition-all flex items-center gap-1.5 shrink-0">
                             <ShoppingCart size={10} />
@@ -1631,7 +2833,14 @@ export default function OrderCockpit() {
                             </colgroup>
                             <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
                               <tr>
-                                <th className="py-4"></th>
+                                <th className="py-4 text-center align-middle">
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllMainSelected}
+                                    onChange={handleToggleSelectAllMain}
+                                    className="w-3.5 h-3.5 rounded border-stone-300 text-teal-600 focus:ring-teal-500 cursor-pointer bg-white"
+                                  />
+                                </th>
                                 <th className="py-4 px-3 text-left font-semibold text-stone-400 text-[10px] uppercase tracking-widest">Ürün Bilgisi</th>
                                 <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">Sipariş</th>
                               </tr>
@@ -1713,6 +2922,7 @@ export default function OrderCockpit() {
                 {activeTab === 'kategori_yonetimi' && <CategoryManager />}
                 {activeTab === 'veritabani_araci' && <DatabaseManager />}
                 {activeTab === 'iadeler' && <IadelerPage gln={data?.gln || 'local'} />}
+                {activeTab === 'psf_kontrol' && <PsfKontrolPage data={data} gln={data?.gln || 'local'} webviewRefs={sharedWebviewRefs} />}
                 {/* {activeTab === 'kardes' && <KardesEczanePage />} */}
                 {['nb', 'para'].includes(activeTab) && (
                   <DataTable data={activeTab === 'nb' ? (data?.nobet_listesi || []) : (data?.nakit_optimizasyon || [])} type={activeTab} gln={data?.gln || 'local'} />
@@ -1858,10 +3068,7 @@ export default function OrderCockpit() {
 
                   {/* Sağ aksiyon grubu */}
                   <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                    <button onClick={handleSelectAllVisible}
-                      className="h-8 px-3 text-[11px] font-semibold rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50 transition-all flex items-center gap-1.5">
-                      <Check size={11} />Tümünü Seç
-                    </button>
+
                     <button onClick={handleDownloadExcel}
                       className="h-8 px-3 text-[11px] font-semibold rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-stone-300 hover:text-stone-800 transition-all flex items-center gap-1.5">
                       <Download size={11} />Excel
@@ -1927,43 +3134,29 @@ export default function OrderCockpit() {
                   return (
                     <table className="border-collapse text-xs w-full" style={{ tableLayout: 'fixed' }}>
                       <colgroup>
-                        <col style={{ width: '40px' }} />
-                        <col />
-                        {/* <col style={{ width: '180px' }} /> */}
-                        <col style={{ width: '56px' }} />
-                        {/* <col style={{ width: '56px' }} /> */}
-                        {/* <col style={{ width: '68px' }} /> */}
-                        <col style={{ width: '36px' }} />
+                        <col style={{ width: '45px' }} /> {/* Checkbox */}
+                        <col /> {/* Ürün Bilgisi */}
+                        <col style={{ width: '300px' }} /> {/* Sipariş */}
                       </colgroup>
                       <thead className="sticky top-0 z-10 bg-white border-b border-stone-100">
                         <tr>
-                          {(() => {
-                            const getHeaderSortKey = (label: string) => {
-                              if (label === 'Ürün Bilgisi') return 'ad';
-                              if (label === 'Hız/ay') return 'hiz';
-                              if (label === 'Stok') return 'stok';
-                              if (label === 'İHT') return 'iht';
-                              return null;
-                            };
-                            return [['', ''], ['Ürün Bilgisi', 'left'], ['Hız/ay', ''], ['', '']].map(([h, align], i) => {
-                              const sortKey = getHeaderSortKey(h);
-                              return (
-                                <th 
-                                  key={i} 
-                                  onClick={() => sortKey && handleCockpitSort(sortKey)}
-                                  className={cn(
-                                    "py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest select-none",
-                                    h && "px-3",
-                                    sortKey && "cursor-pointer hover:text-stone-600",
-                                    align === 'left' ? "text-left" : "text-center"
-                                  )}
-                                >
-                                  {h}
-                                  {sortKey && cockpitSortField === sortKey ? (cockpitSortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                </th>
-                              );
-                            });
-                          })()}
+                          <th className="py-4 text-center align-middle">
+                            <input
+                              type="checkbox"
+                              checked={isAllExpandedSelected}
+                              onChange={handleToggleSelectAllExpanded}
+                              className="w-3.5 h-3.5 rounded border-stone-300 text-teal-600 focus:ring-teal-500 cursor-pointer bg-white"
+                            />
+                          </th>
+                          <th 
+                            onClick={() => handleCockpitSort('ad')}
+                            className="py-4 px-3 text-left font-semibold text-stone-400 text-[10px] uppercase tracking-widest select-none cursor-pointer hover:text-stone-600"
+                          >
+                            Ürün Bilgisi{cockpitSortField === 'ad' ? (cockpitSortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                          </th>
+                          <th className="py-4 font-semibold text-stone-400 text-[10px] uppercase tracking-widest text-center">
+                            Sipariş
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2243,6 +3436,281 @@ export default function OrderCockpit() {
                 );
                 })()}
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* AI SİPARİŞ MODALI */}
+      <AnimatePresence>
+        {showAIModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-end md:items-center justify-center bg-stone-900/40 backdrop-blur-sm p-0 md:p-6"
+            onClick={() => { if (!aiSimulating) setShowAIModal(false); }}>
+            <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }}
+              onClick={(e: any) => e.stopPropagation()}
+              className="bg-white rounded-t-[2rem] md:rounded-[2rem] shadow-2xl w-full md:max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+              
+              {/* MODAL HEADER */}
+              <div className="px-6 py-5 border-b border-stone-100 flex justify-between items-start shrink-0">
+                <div>
+                  <h3 className="font-black text-stone-900 text-base leading-tight flex items-center gap-2">
+                    <Sparkles size={18} className="text-violet-600" />
+                    AI Akıllı Sipariş Simülasyonu (AS Ecza)
+                  </h3>
+                  <p className="text-xs text-stone-400 mt-1">AS Ecza canlı MF ve stok verileriyle optimizasyon yapar.</p>
+                </div>
+                <button onClick={() => { if (!aiSimulating) setShowAIModal(false); }} disabled={aiSimulating}
+                  className="h-9 w-9 flex items-center justify-center rounded-xl bg-stone-100 hover:bg-red-50 hover:text-red-600 transition-colors text-stone-500 shrink-0 disabled:opacity-50">
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* MODAL BODY */}
+              <div className="p-6 overflow-y-auto custom-scrollbar bg-white flex-1 space-y-6">
+                
+                {/* SORULAR */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-stone-50 p-5 rounded-2xl border border-stone-100">
+                  <div>
+                    <label className="block text-xs font-black text-stone-700 uppercase tracking-wider mb-2">
+                      A. Kaç günlük stok sipariş etmek istersiniz?
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input type="range" min="2" max="60" value={aiTargetDays} onChange={e => setAiTargetDays(parseInt(e.target.value) || 7)} className="flex-1 accent-violet-600 h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer" />
+                      <span className="text-sm font-black text-violet-750 w-16 text-right">{aiTargetDays} Gün</span>
+                    </div>
+                    <div className="flex gap-1.5 mt-2.5">
+                      {[7, 10, 15, 30].map(d => (
+                        <button key={d} onClick={() => setAiTargetDays(d)} className={cn("px-2.5 py-1 text-[10px] font-extrabold rounded-md border", aiTargetDays === d ? "bg-violet-600 border-violet-600 text-white" : "bg-white border-stone-200 text-stone-500 hover:border-stone-300")}>
+                          {d}G
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-black text-stone-700 uppercase tracking-wider mb-2">
+                      B. Barem için en fazla kaç günlük stok birikimini göze alırsınız?
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input type="range" min="10" max="90" value={aiMaxDays} onChange={e => setAiMaxDays(parseInt(e.target.value) || 30)} className="flex-1 accent-violet-600 h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer" />
+                      <span className="text-sm font-black text-violet-750 w-16 text-right">{aiMaxDays} Gün</span>
+                    </div>
+                    <div className="flex gap-1.5 mt-2.5">
+                      {[20, 30, 45, 60].map(d => (
+                        <button key={d} onClick={() => setAiMaxDays(d)} className={cn("px-2.5 py-1 text-[10px] font-extrabold rounded-md border", aiMaxDays === d ? "bg-violet-600 border-violet-600 text-white" : "bg-white border-stone-200 text-stone-500 hover:border-stone-300")}>
+                          {d}G
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* HARIÇ TUTULACAK GRUPLAR */}
+                <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 flex flex-wrap gap-6 items-center">
+                  <div className="flex items-center gap-6 flex-wrap">
+                    <span className="text-xs font-black text-stone-750 uppercase tracking-wider select-none">Simülasyon Deposu:</span>
+                    
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-stone-600 hover:text-stone-900 transition-colors">
+                      <input type="radio" name="aiSimulationWarehouse" value="as" checked={aiSimulationWarehouse === 'as'} onChange={() => setAiSimulationWarehouse('as')} className="w-4 h-4 border-stone-300 text-violet-600 focus:ring-violet-500/20" />
+                      <span>AS Ecza</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-stone-600 hover:text-stone-900 transition-colors">
+                      <input type="radio" name="aiSimulationWarehouse" value="gek" checked={aiSimulationWarehouse === 'gek'} onChange={() => setAiSimulationWarehouse('gek')} className="w-4 h-4 border-stone-300 text-violet-600 focus:ring-violet-500/20" />
+                      <span>Güney Ecza (GEK)</span>
+                    </label>
+                  </div>
+                  
+                  <div className="w-full border-t border-stone-200/50 my-1"></div>
+
+                  <div className="flex items-center gap-6 flex-wrap">
+                    <span className="text-xs font-black text-stone-750 uppercase tracking-wider select-none">Hariç Tutulacak Gruplar:</span>
+                    
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-stone-600 hover:text-stone-900 transition-colors">
+                      <input type="checkbox" checked={aiExcludeEnteral} onChange={e => setAiExcludeEnteral(e.target.checked)} className="w-4 h-4 rounded border-stone-300 text-violet-600 focus:ring-violet-500/20" />
+                      <span>Enteral Ürünleri Hariç Tut</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-stone-600 hover:text-stone-900 transition-colors">
+                      <input type="checkbox" checked={aiExcludeTnf} onChange={e => setAiExcludeTnf(e.target.checked)} className="w-4 h-4 rounded border-stone-300 text-violet-600 focus:ring-violet-500/20" />
+                      <span>TNF Ürünleri Hariç Tut</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-stone-600 hover:text-stone-900 transition-colors">
+                      <input type="checkbox" checked={aiExcludeIlacDisi} onChange={e => setAiExcludeIlacDisi(e.target.checked)} className="w-4 h-4 rounded border-stone-300 text-violet-600 focus:ring-violet-500/20" />
+                      <span>İlaç Dışı Ürünleri Hariç Tut</span>
+                    </label>
+                  </div>
+                  
+                  <div className="w-full border-t border-stone-200/50 my-1"></div>
+                  
+                  <div className="flex items-center gap-6 flex-wrap">
+                    <span className="text-xs font-black text-stone-750 uppercase tracking-wider select-none">Ek Filtreler:</span>
+                    
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-stone-600 hover:text-stone-900 transition-colors">
+                      <input type="checkbox" checked={aiOnlyPharmaceuticalAndNoEquivalent} onChange={e => setAiOnlyPharmaceuticalAndNoEquivalent(e.target.checked)} className="w-4 h-4 rounded border-stone-300 text-violet-600 focus:ring-violet-500/20" />
+                      <span>Sadece İlaç ve Eşdeğersiz Ürünleri Simüle Et</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* AKSİYON & LOADING */}
+                <div className="flex flex-col items-center justify-center py-2">
+                  {!aiSimulating && (
+                    <button onClick={runAISimulation} className="px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white font-extrabold text-sm rounded-xl shadow-md transition-all flex items-center gap-2 animate-pulse hover:animate-none">
+                      <Sparkles size={16} /> {aiResults.length > 0 ? "Simülasyonu Yenile" : "Simülasyonu Başlat"}
+                    </button>
+                  )}
+
+                  {aiSimulating && (
+                    <div className="w-full space-y-3 text-center">
+                      <div className="relative w-12 h-12 mx-auto">
+                        <div className="absolute inset-0 rounded-full border-4 border-violet-100"></div>
+                        <div className="absolute inset-0 rounded-full border-4 border-violet-600 border-t-transparent animate-spin"></div>
+                      </div>
+                      <p className="text-xs font-bold text-violet-700 animate-pulse">{aiProgress}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* SİMÜLASYON SONUÇ TABLOSU */}
+                {aiResults.length > 0 && (
+                  <div className="border border-stone-200 rounded-2xl overflow-hidden shadow-sm bg-white">
+                    <div className="max-h-[40vh] overflow-y-auto custom-scrollbar">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="bg-stone-50 border-b border-stone-200 sticky top-0 z-10 text-stone-500">
+                          <tr>
+                            <th className="px-4 py-3 font-bold uppercase text-[9px] w-[30%]">Ürün Adı / Barkod</th>
+                            <th className="px-3 py-3 font-bold uppercase text-[9px] text-center w-[10%]">Mevcut Stok</th>
+                            <th className="px-3 py-3 font-bold uppercase text-[9px] text-center w-[12%]">Aylık Hız</th>
+                            <th className="px-3 py-3 font-bold uppercase text-[9px] text-center w-[10%]">Saf İhtiyaç</th>
+                            <th className="px-3 py-3 font-bold uppercase text-[9px] text-center w-[10%]">AI Öneri</th>
+                            <th className="px-3 py-3 font-bold uppercase text-[9px] text-center w-[25%]">M.F. Baremleri</th>
+                            <th className="px-3 py-3 font-bold uppercase text-[9px] text-center w-[13%]">Oluşacak Ömür</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-100 font-medium text-stone-700">
+                          {aiResults.map((r, idx) => {
+                            if (r.hata) {
+                              return (
+                                <tr key={idx} className="bg-red-50/30">
+                                  <td className="px-4 py-3 text-left">
+                                    <p className="font-bold text-stone-850 truncate">{r.ad}</p>
+                                    <p className="font-mono text-[10px] text-stone-400 mt-0.5">{r.barkod}</p>
+                                  </td>
+                                  <td colSpan={6} className="px-4 py-3 text-center text-red-500 font-bold text-[10px]">
+                                    ⚠️ {r.hata}
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return (
+                              <tr key={idx} className="hover:bg-stone-50/50 group/row">
+                                <td className="px-4 py-3 text-left">
+                                  <div className="flex items-center gap-2 justify-between">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <p className="font-bold text-stone-850 truncate max-w-[180px] md:max-w-[240px]" title={r.ad}>{r.ad}</p>
+                                      {r.isCached && (
+                                        <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-stone-100 text-stone-500 border border-stone-200 shrink-0">
+                                          Önbellek
+                                        </span>
+                                      )}
+                                    </div>
+                                    <button 
+                                      onClick={() => handleDeleteResult(r.barkod)}
+                                      className="opacity-0 group-hover/row:opacity-100 p-1 text-stone-400 hover:text-red-500 rounded transition-all shrink-0 cursor-pointer"
+                                      title="Simülasyondan Kaldır"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                  <p className="font-mono text-[10px] text-stone-400 mt-0.5">{r.barkod}</p>
+                                </td>
+                                <td className="px-3 py-3 text-center font-mono font-bold text-stone-500">{r.stok}</td>
+                                <td className="px-3 py-3 text-center font-mono font-bold text-stone-500">{r.hiz.toFixed(1)}/ay</td>
+                                <td className="px-3 py-3 text-center font-mono font-bold text-stone-600">{r.ihtiyac}</td>
+                                <td className={cn("px-3 py-3 text-center font-mono font-black", r.onerilen > 0 ? "text-violet-750 bg-violet-50/40" : "text-stone-300")}>
+                                  {r.onerilen}
+                                </td>
+                                <td className="px-3 py-3 text-center">
+                                  <div className="flex flex-wrap gap-1 justify-center max-w-[180px] mx-auto">
+                                    {r.baremler && r.baremler.length > 0 ? (
+                                      r.baremler.map((barem: string, bIdx: number) => {
+                                        const isSelected = r.secilenBarem === barem;
+                                        const bgClass = r.secilenBarem 
+                                          ? (isSelected ? "bg-emerald-600 border-emerald-700 text-white" : "bg-amber-500 border-amber-600 text-white hover:bg-amber-600") 
+                                          : "bg-amber-500 border-amber-600 text-white hover:bg-amber-600";
+                                        return (
+                                          <button
+                                            key={bIdx}
+                                            onClick={() => handleBaremSelect(r.barkod, barem)}
+                                            className={cn(
+                                              "px-1.5 py-0.5 rounded text-[9px] font-black border transition-all cursor-pointer whitespace-nowrap",
+                                              bgClass
+                                            )}
+                                            title="Barem seçmek/bırakmak için tıklayın"
+                                          >
+                                            {barem}
+                                          </button>
+                                        );
+                                      })
+                                    ) : (
+                                      <span className="text-stone-300 font-bold">—</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-center">
+                                  {r.yeniOmur !== null ? (
+                                    <span className={cn(
+                                      "px-1.5 py-0.5 rounded text-[10px] font-black",
+                                      r.yeniOmur < 15 ? "bg-rose-50 text-rose-700" :
+                                      r.yeniOmur < 30 ? "bg-amber-50 text-amber-700" :
+                                      "bg-emerald-50 text-emerald-700"
+                                    )}>
+                                      ~{r.yeniOmur} gün
+                                    </span>
+                                  ) : (
+                                    <span className="text-stone-300 font-bold">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* ÖZET SATIRI */}
+                    <div className="bg-stone-50 px-5 py-4 border-t border-stone-200 flex justify-between items-center text-xs font-black text-stone-700">
+                      <div>
+                        Toplam Simüle Edilen: <span className="text-stone-900 font-bold">{aiResults.length} kalem</span>
+                      </div>
+                      <div className="flex gap-4">
+                        <span>Toplam Sipariş: <span className="text-violet-750 font-black">{aiResults.filter(r => (r.onerilen || 0) > 0).length} kalem, {aiResults.reduce((acc, r) => acc + (r.onerilen || 0), 0)} kutu</span></span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              {/* MODAL FOOTER */}
+              <div className="px-6 py-4 bg-stone-50 border-t border-stone-100 flex justify-between items-center shrink-0">
+                <p className="text-[10px] font-semibold text-stone-400 max-w-sm leading-normal">
+                  * Onayladığınızda AI önerileri sepetinize aktarılacak ve otomatik olarak güncellenecektir.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => { if (!aiSimulating) setShowAIModal(false); }} disabled={aiSimulating}
+                    className="h-10 px-4 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 font-bold text-xs disabled:opacity-50">
+                    İptal
+                  </button>
+                  <button onClick={handleApplyAISuggestions} disabled={aiSimulating || aiResults.length === 0 || aiResults.every(r => r.onerilen === 0)}
+                    className="h-10 px-5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-extrabold text-xs shadow-md disabled:opacity-50 flex items-center gap-1.5">
+                    <Check size={14} /> Onayla ve Sepete Aktar
+                  </button>
+                </div>
+              </div>
+
             </motion.div>
           </motion.div>
         )}
@@ -2599,10 +4067,13 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
   const originalCount = grup.original_count ?? grup.detaylar.length;
   const isSingle = originalCount === 1;
 
-  const totalSpeed = grup.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0) * 30;
-  const totalStock = grup.detaylar.reduce((acc: number, u: any) => acc + (u.v4 || 0), 0);
-  const totalDailySpeed = grup.detaylar.reduce((acc: number, u: any) => acc + (u.v20 || 0), 0);
-  const omurGun = totalDailySpeed > 0 && totalStock > 0 ? Math.round(totalStock / totalDailySpeed) : null;
+  // Eşdeğerli ise orijinal (tüm) ürün listesi üzerinden, eşdeğersiz ise filtreli ürün üzerinden hesapla
+  const statsSource = (originalCount > 1 && grup.original_detaylar) ? grup.original_detaylar : grup.detaylar;
+
+  const totalSpeed = statsSource.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0) * 30;
+  const totalStock = statsSource.reduce((acc: number, u: any) => acc + (Number(u.v4) || 0), 0);
+  const totalDailySpeed = statsSource.reduce((acc: number, u: any) => acc + (Number(u.v20) || 0), 0);
+  const omurGun = totalDailySpeed > 0 ? Math.round(totalStock / totalDailySpeed) : null;
   const grupBaslik = (grup.lider_adi || '').split(' ')[0] + ' GRUBU';
 
   const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit };
@@ -2634,14 +4105,24 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
 
                 {/* Grup İstatistikleri */}
                 <div className="flex items-center gap-4 text-[10px] font-bold text-stone-500 ml-2">
-                  <span className="flex items-center gap-1"><TrendingUp size={12} className="text-stone-400" /> {totalSpeed.toFixed(1)}/ay</span>
-                  <span className={cn("flex items-center gap-1", totalStock <= 0 ? "text-red-500" : "text-stone-600")}>
+                  <span className="flex items-center gap-1" title="Grup Aylık Ortalama Çıkış Hızı">
+                    <TrendingUp size={12} className="text-stone-400" /> {totalSpeed.toFixed(1)}/ay
+                  </span>
+                  <span className={cn("flex items-center gap-1", totalStock <= 0 ? "text-red-500" : "text-stone-600")} title="Grup Toplam Stoğu">
                     <Package size={12} className="text-stone-400" /> {totalStock} Stok
                   </span>
-                  <span className="text-stone-300 font-medium">{originalCount} Eşdeğer</span>
-                  {omurGun && omurGun < 30 && (
-                    <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[9px] animate-pulse">Kritik: ~{omurGun} gün</span>
-                  )}
+                  <span className="text-stone-400 font-bold" title="Gruptaki Eşdeğer Sayısı">
+                    {originalCount} Eşdeğer
+                  </span>
+                  <span className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-black",
+                    omurGun === null ? "text-stone-400 bg-stone-50" :
+                    omurGun < 30 ? "text-rose-700 bg-rose-50 animate-pulse border border-rose-100" :
+                    omurGun < 60 ? "text-amber-700 bg-amber-50 border border-amber-100" :
+                    "text-emerald-700 bg-emerald-50 border border-emerald-100"
+                  )} title="Grup Kalan Ömrü">
+                    Ömür: {omurGun !== null ? `~${omurGun} gün` : '—'}
+                  </span>
                 </div>
               </div>
 
@@ -3221,7 +4702,11 @@ function AyarlarPage({ supabase }: { supabase: any }) {
     gln: "",
     software: "Botanik",
     server_instance: "",
-    database: ""
+    database: "",
+    auto_scan_9am: false,
+    scan_before_simulation: false,
+    auto_scan_24h: false,
+    default_ai_order_mode: false
   });
   const [savingSettings, setSavingSettings] = React.useState(false);
 
@@ -3237,7 +4722,11 @@ function AyarlarPage({ supabase }: { supabase: any }) {
               gln: parsed.gln || "",
               software: parsed.software || "Botanik",
               server_instance: parsed.server_instance || "",
-              database: parsed.database || ""
+              database: parsed.database || "",
+              auto_scan_9am: !!parsed.auto_scan_9am,
+              scan_before_simulation: !!parsed.scan_before_simulation,
+              auto_scan_24h: !!parsed.auto_scan_24h,
+              default_ai_order_mode: !!parsed.default_ai_order_mode
             });
           }
         } catch (err) {
@@ -3337,6 +4826,55 @@ function AyarlarPage({ supabase }: { supabase: any }) {
                   onChange={e => setLocalSettings(prev => ({ ...prev, database: e.target.value }))}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-100 focus:border-teal-400 outline-none text-sm transition-all font-mono text-slate-800"
                 />
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-100 space-y-4">
+              <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider">AI ve Otomatik Tarama Ayarları</h4>
+              <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                Uygulama arka plan görevleri ve simülasyon davranışlarını özelleştirin.
+              </p>
+
+              <div className="space-y-3">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={localSettings.auto_scan_9am}
+                    onChange={e => setLocalSettings(prev => ({ ...prev, auto_scan_9am: e.target.checked }))}
+                    className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-teal-500/20"
+                  />
+                  <span>Her gün saat 09:00'da komple tarama yap</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={localSettings.scan_before_simulation}
+                    onChange={e => setLocalSettings(prev => ({ ...prev, scan_before_simulation: e.target.checked }))}
+                    className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-teal-500/20"
+                  />
+                  <span>Her simülasyon öncesi değişen satırları tara</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={localSettings.auto_scan_24h}
+                    onChange={e => setLocalSettings(prev => ({ ...prev, auto_scan_24h: e.target.checked }))}
+                    className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-teal-500/20"
+                  />
+                  <span>Son komple tarama üzerinden 24 saat geçmişse otomatik tarama yap</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={localSettings.default_ai_order_mode}
+                    onChange={e => setLocalSettings(prev => ({ ...prev, default_ai_order_mode: e.target.checked }))}
+                    className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-teal-500/20"
+                  />
+                  <span>Program ilk açıldığında AI Sipariş Modunu aktif et</span>
+                </label>
               </div>
             </div>
 

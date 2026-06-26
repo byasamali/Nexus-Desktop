@@ -118,6 +118,9 @@ def profile_data(df):
         return mf_data
 
     available_cols = [c for c in target_meta_cols if c in df.columns]
+    # 🚀 KRİTİK: first() her zaman en son kaydı (güncel stok ve fiyatı) alsın diye tarihleri azalan sıralayalım
+    if 'satis_tarihi' in df.columns:
+        df = df.sort_values(by='satis_tarihi', ascending=False)
     meta = df.groupby('barkod').first()[available_cols]
     
     # 🚀 KRİTİK: Geçmiş alımlardan MF baremlerini üret

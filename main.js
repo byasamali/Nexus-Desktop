@@ -80,7 +80,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: false, // Disabled to expose window.go directly
       nodeIntegration: true,    // Enabled for direct ipc communication
-      webviewTag: true         // Crucial for embedding warehouse portals!
+      webviewTag: true,         // Crucial for embedding warehouse portals!
+      nodeIntegrationInSubFrames: true // Enable preload script execution in subframes
     }
   });
 
@@ -186,8 +187,36 @@ ipcMain.handle('wails:AppendOrderResult', async (event, gln, entry) => {
       } catch { orders = []; }
     }
 
-    // Yeni kaydı ekle
-    orders.push(typeof entry === 'string' ? JSON.parse(entry) : entry);
+    // Yeni kaydı parse et ve alanları normalize et
+    const entryObj = typeof entry === 'string' ? JSON.parse(entry) : entry;
+    
+    // Tarihi YYYY-MM-DD formatına çevir
+    if (entryObj.tarih) {
+      if (entryObj.tarih.includes('T')) {
+        entryObj.tarih = entryObj.tarih.split('T')[0];
+      }
+    } else {
+      entryObj.tarih = new Date().toISOString().split('T')[0];
+    }
+    
+    // Depo bilgisini normalize et
+    if (!entryObj.depo) {
+      entryObj.depo = 'AS ECZA';
+    }
+
+    // Mükerrer (duplicate) kontrolü: aynı tarih, aynı barkod, aynı depo
+    const isDuplicate = orders.some(o => {
+      const oDate = o.tarih && o.tarih.includes('T') ? o.tarih.split('T')[0] : o.tarih;
+      const oDepo = o.depo || 'AS ECZA';
+      return oDate === entryObj.tarih && o.barkod === entryObj.barkod && oDepo === entryObj.depo;
+    });
+
+    if (isDuplicate) {
+      console.log(`[AS Sipariş] Mükerrer kayıt engellendi: Tarih=${entryObj.tarih}, Barkod=${entryObj.barkod}, Depo=${entryObj.depo}`);
+      return 'duplicate';
+    }
+
+    orders.push(entryObj);
     fs.writeFileSync(filePath, JSON.stringify(orders, null, 2), 'utf8');
     console.log(`[AS Sipariş] Kaydedildi: ${filePath} (toplam ${orders.length} kayıt)`);
     return 'ok';
@@ -341,12 +370,63 @@ app.whenReady().then(() => {
   registerAppProtocol();
   createWindow();
 
+  // ── GEK Network Interceptor (debug) ─────────────────────────────────────
+  // Capture ALL requests/responses to GEK's MainService API for diagnosis
+  try {
+    const { session } = require('electron');
+    const ALL_SESSIONS = [
+      session.defaultSession,
+      session.fromPartition('persist:depolar'),
+    ];
+    const gekLogPath = path.join(pythonDir, 'tenants', 'local', 'gek_network_log.json');
+    let gekLogs = [];
+    try { if (fs.existsSync(gekLogPath)) gekLogs = JSON.parse(fs.readFileSync(gekLogPath, 'utf8')); } catch {}
+
+    const GEK_URL_FILTER = { urls: ['*://esube.gek.org.tr/MainService/api/rfc/*'] };
+
+    ALL_SESSIONS.forEach(sess => {
+      sess.webRequest.onSendHeaders(GEK_URL_FILTER, (details) => {
+        const entry = {
+          t: new Date().toISOString(),
+          phase: 'request',
+          method: details.method,
+          url: details.url,
+          requestHeaders: details.requestHeaders,
+        };
+        gekLogs.push(entry);
+        if (gekLogs.length > 500) gekLogs = gekLogs.slice(-500);
+        try { fs.writeFileSync(gekLogPath, JSON.stringify(gekLogs, null, 2)); } catch {}
+        console.log('[GEK Intercept] →', details.method, details.url);
+      });
+
+      sess.webRequest.onCompleted(GEK_URL_FILTER, (details) => {
+        const entry = {
+          t: new Date().toISOString(),
+          phase: 'response',
+          method: details.method,
+          url: details.url,
+          statusCode: details.statusCode,
+          responseHeaders: details.responseHeaders,
+        };
+        gekLogs.push(entry);
+        if (gekLogs.length > 500) gekLogs = gekLogs.slice(-500);
+        try { fs.writeFileSync(gekLogPath, JSON.stringify(gekLogs, null, 2)); } catch {}
+        console.log('[GEK Intercept] ←', details.statusCode, details.url);
+      });
+    });
+    console.log('[GEK Intercept] webRequest interceptors registered for GEK MainService API');
+  } catch (e) {
+    console.error('[GEK Intercept] Failed to register webRequest interceptors:', e);
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
+
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
