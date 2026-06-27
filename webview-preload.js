@@ -133,6 +133,20 @@ const injectScript = () => {
         try {
           const url = args[0] && typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
           
+          // Intercept response body for token if it's gt or al
+          if (url.includes("/MainService/api/rfc/gt") || url.includes("/MainService/api/rfc/al")) {
+            try {
+              const clone = response.clone();
+              const body = await clone.text();
+              let token = null;
+              try { const j = JSON.parse(body); token = j.token || j.Token || j.TOKEN || j.accessToken || j.access_token || j.data?.token; } catch { token = body.trim(); }
+              if (token && typeof token === 'string' && token.length > 10) {
+                window.__gekToken = token;
+                window.postMessage({ source: 'nexus-interceptor', type: 'gek-token', token }, '*');
+              }
+            } catch {}
+          }
+
           // Intercept request headers for token
           let reqToken = null;
           const options = args[1] || {};

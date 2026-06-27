@@ -534,7 +534,8 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                                credentials: 'include'
                              });
                              if (gtR.ok) {
-                               let gd = await gtR.json();
+                               let gd = null;
+                               try { gd = await gtR.json(); } catch {}
                                const nt = gd && (gd.token || gd.Token || gd.TOKEN || gd.accessToken || gd.access_token || (gd.response && (gd.response.token || gd.response.Token)));
                                if (nt && String(nt).length > 10) {
                                  token = String(nt);
@@ -556,7 +557,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                              }
                            }
 
-                          if (searchResp.status === 500) return { error: 'server_error_500' };
+                          if (searchResp.status === 500) return { error: 'login_required' };
                           if (searchResp.status === 401 || searchResp.status === 403) return { error: 'login_required' };
                           if (!searchResp.ok) return { error: 'search_http_' + searchResp.status };
 
@@ -607,64 +608,39 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                     }
 
                     const detailData = queryResult.detailData;
-                    const detail = detailData?.obj || detailData || {};
-                    const conds = detail?.ET_A004 || [];
-                    const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
-                    const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
-
+                    
                     let tmpPsf = 0;
                     let tmpDsf = 0;
-                    if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
-                    if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
-
-                    if (!tmpPsf) {
-                        tmpPsf = parsePrice(detail?.tavsiyeEdilenSatisFiyati || detail?.SonFiyat || detail?.etiketFiyati) || parseFloat(conds[0]?.KBETR) || parseFloat(detail?.PSF) || 0;
-                    }
-                    if (!tmpDsf) {
-                        tmpDsf = parsePrice(detail?.depocuFiyati || detail?.DSF) || tmpPsf * 0.83;
-                    }
-
-                    const dsfVal = tmpDsf;
-                    const psfVal = tmpPsf;
+                    let stokVal = 0;
                     
                     const mfList: string[] = [];
                     const netList: string[] = [];
+
+                    const kart = detailData?.EP_S_MALZEME_KARTI || {};
+                    tmpPsf = parseFloat(kart.PSF || detailData?.EP_T_PSF?.[0]?.PSF || detailData?.PSF || 0);
+                    tmpDsf = parseFloat(kart.DSF || detailData?.DSF || 0);
                     
-                    if (Array.isArray(detail?.grdKampanyalar) && detail.grdKampanyalar.length > 0) {
-                        let mfRaw = '';
-                        let netRaw = '';
-                        for (const kamp of detail.grdKampanyalar) {
-                            if (kamp?.mf && String(kamp.mf).trim().length > 0) {
-                                mfRaw = kamp.mf;
-                                netRaw = kamp.netFiyat || '';
-                                break;
-                            }
-                        }
-                        if (!mfRaw && detail.grdKampanyalar.length > 0) {
-                            mfRaw = detail.grdKampanyalar[0]?.mf || '';
-                            netRaw = detail.grdKampanyalar[0]?.netFiyat || '';
-                        }
-                        
-                        const extractedMf = extractSpansLocal(mfRaw).filter(m => {
-                            if (!m) return false;
-                            if (m.toLowerCase().endsWith('+0')) return false;
-                            return true;
-                        });
-                        const extractedNet = extractSpansLocal(netRaw);
-                        
-                        mfList.push(...extractedMf);
-                        netList.push(...extractedNet);
+                    if (detailData?.EP_S_VWERK?.STOK_MEVCUT === 'X') {
+                        stokVal = parseInt(detailData?.EP_S_LIMIT?.KALAN_BAZ || 999);
                     } else {
-                        const campaigns = detail?.ET_KAMPANYA || detail?.ET_KOMP || [];
-                        campaigns.forEach((c: any) => {
-                            if (c.MF) mfList.push(c.MF);
-                            if (c.NET) netList.push(String(c.NET));
-                        });
+                        stokVal = parseInt(kart.STOK || detailData?.STOK || 0) || 0;
                     }
+
+                    const baremler = detailData?.EP_T_BAREM || [];
+                    baremler.forEach((b: any) => {
+                        if (b.MFTXT && b.MFTXT.includes('+')) {
+                            mfList.push(b.MFTXT);
+                            const netVal = b.BIRIMFIYAT || b.PORV2_BIRIMFIYAT || 0;
+                            netList.push(String(netVal));
+                        }
+                    });
+
+                    const dsfVal = tmpDsf;
+                    const psfVal = tmpPsf;
 
                     cache[barcode] = {
                         date: todayStr,
-                        stok: detail?.ET_MARC?.[0]?.LABST ?? detail?.LABST ?? (typeof detail?.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail?.stokDurumu || 0)) ?? 0,
+                        stok: stokVal,
                         fiyat_depocu: dsfVal,
                         fiyat_etiket: psfVal,
                         mf_baremleri: mfList,

@@ -544,6 +544,14 @@ export default function OrderCockpit() {
       }
     }
     loadPreload();
+    try {
+      const stored = localStorage.getItem('nexus_ai_carrying_cost');
+      if (stored) {
+        setAiMonthlyCarryingCost(parseFloat(stored) || 5);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   }, []);
 
   const getDynamicBreadcrumb = (id: number) => {
@@ -642,6 +650,8 @@ export default function OrderCockpit() {
   const [aiMaxDays, setAiMaxDays] = useState<number>(30);
   const [aiSimulating, setAiSimulating] = useState(false);
   const [aiProgress, setAiProgress] = useState('');
+  const [aiMonthlyCarryingCost, setAiMonthlyCarryingCost] = useState<number>(5);
+  const [whyItem, setWhyItem] = useState<any>(null);
   const [aiResults, setAiResults] = useState<any[]>([]);
   const [preloadPath, setPreloadPath] = useState('');
   const [aiExcludeEnteral, setAiExcludeEnteral] = useState<boolean>(false);
@@ -810,8 +820,9 @@ export default function OrderCockpit() {
 
   // ✨ AI Sipariş Modu Fonksiyonları
   const runAISimulation = async () => {
-    const gln = data?.gln || 'local';
-    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+      const gln = data?.gln || 'local';
+      const todayStr = new Date().toISOString().split('T')[0];
 
     // B. Her simülasyon öncesi değişen satırlar için tarama yapsın
     if (appSettings.scan_before_simulation) {
@@ -1494,7 +1505,7 @@ export default function OrderCockpit() {
             let mfRaw = '';
             let netRaw = '';
             for (const kamp of kampanyalar) {
-              if (camp?.mf && String(kamp.mf).trim().length > 0) { // Note: original used kamp.mf but check loop var
+              if (kamp?.mf && String(kamp.mf).trim().length > 0) {
                 mfRaw  = kamp.mf;
                 netRaw = kamp.netFiyat || '';
                 break;
@@ -1581,6 +1592,7 @@ export default function OrderCockpit() {
         let suggestedQty = 0;
         let chosenBarem: string | null = null;
         let chosenNetPrice = dsfVal;
+        let whyData: any = null;
 
         if (need > 0) {
           suggestedQty = need; // Varsayılan: Saf İhtiyaç
@@ -1603,31 +1615,87 @@ export default function OrderCockpit() {
             // Barem alım miktarına göre küçükten büyüğe sırala
             parsedBarems.sort((a, b) => a.ana - b.ana);
 
-            // En avantajlı ve güvenli baremi seç
-            let bestBarem: any = null;
-            let bestDiscount = -1;
-
-            for (const b of parsedBarems) {
-              const futureStock = currentGroupStock + b.ana + b.bedava;
-              const futureLifetimeDays = futureStock / groupDailySpeed;
-
-              // Maksimum gün sınırına takılmıyorsa
-              if (futureLifetimeDays <= aiMaxDays) {
-                // İhtiyacımızın %70 veya fazlası ise bareme yuvarlamaya değer
-                if (need >= 0.7 * b.ana) {
-                  if (b.discount > bestDiscount) {
-                    bestDiscount = b.discount;
-                    bestBarem = b;
-                  }
-                }
+            // 1. Baseline baremi belirle (saf ihtiyacın karşıladığı en büyük barem)
+            let baselineBaremObj = null;
+            for (let i = parsedBarems.length - 1; i >= 0; i--) {
+              if (parsedBarems[i].ana <= need) {
+                baselineBaremObj = parsedBarems[i];
+                break;
               }
             }
+            
+            const baselineNetPrice = baselineBaremObj ? baselineBaremObj.netPrice : dsfVal;
+            const baselineBaremRaw = baselineBaremObj ? baselineBaremObj.raw : null;
+
+            // 2. Default değerleri baseline durumuna göre ayarla
+            if (baselineBaremObj && (baselineBaremObj.ana + baselineBaremObj.bedava) >= need) {
+              suggestedQty = baselineBaremObj.ana;
+              chosenBarem = baselineBaremObj.raw;
+              chosenNetPrice = baselineBaremObj.netPrice;
+            }
+
+            // 3. Her baremi analiz et
+            const analyzedBarems = parsedBarems.map(b => {
+              const totalFreeQty = b.ana + b.bedava;
+              const totalDays = (currentGroupStock + totalFreeQty) / groupDailySpeed;
+              const deltaDays = totalFreeQty / groupDailySpeed;
+              const deltaMonths = deltaDays / 30;
+              const carryingCostPct = deltaMonths * (aiMonthlyCarryingCost / 100);
+              
+              // Getiri oranı (baseline net fiyata göre)
+              const gainPct = baselineNetPrice > 0 ? (baselineNetPrice - b.netPrice) / baselineNetPrice : 0;
+              const netReturn = gainPct - carryingCostPct;
+
+              let status = 'pending';
+              let reason = '';
+
+              if (totalDays > aiMaxDays) {
+                status = 'rejected_max_days';
+                reason = `${Math.round(totalDays)} gün`;
+              } else if (b.raw === baselineBaremRaw) {
+                status = 'baseline_covered';
+                reason = 'Referans barem (Saf İhtiyaç)';
+              } else if (netReturn <= 0) {
+                status = 'rejected_carrying_cost';
+                reason = `Maliyet (%${(carryingCostPct * 100).toFixed(1)}) > Kazanç (%${(gainPct * 100).toFixed(1)})`;
+              } else {
+                status = 'profitable';
+                reason = `Net Getiri: %${(netReturn * 100).toFixed(1)}`;
+              }
+
+              return {
+                raw: b.raw,
+                ana: b.ana,
+                bedava: b.bedava,
+                netPrice: b.netPrice,
+                gainPct,
+                carryingCostPct,
+                netReturn,
+                status,
+                reason
+              };
+            });
+
+            // 3. En kârlı olan (profitable statuslu ve netReturn değeri en yüksek) baremi seç
+            const profitableBarems = analyzedBarems.filter(b => b.status === 'profitable');
+            profitableBarems.sort((a, b) => b.netReturn - a.netReturn);
+
+            let bestBarem = profitableBarems[0] || null;
 
             if (bestBarem) {
               suggestedQty = bestBarem.ana;
               chosenBarem = bestBarem.raw;
               chosenNetPrice = bestBarem.netPrice;
             }
+
+            whyData = {
+              need,
+              targetDays: aiTargetDays,
+              baselineBarem: baselineBaremRaw,
+              baselineNetPrice,
+              carryingCostRate: aiMonthlyCarryingCost,
+              barems: analyzedBarems
+            };
           }
         }
 
@@ -1649,7 +1717,8 @@ export default function OrderCockpit() {
           toplamTutar: suggestedQty * dsfVal,
           isCached: isFromCache,
           baremler: mfList,
-          netFiyatlar: netList
+          netFiyatlar: netList,
+          whyData
         });
 
       } catch (err) {
@@ -1683,6 +1752,11 @@ export default function OrderCockpit() {
 
     setAiSimulating(false);
     setAiProgress('');
+    } catch (err: any) {
+      alert("Simülasyon başlatılamadı: " + String(err?.message || err));
+      setAiSimulating(false);
+      setAiProgress('');
+    }
   };
 
   const handleBaremSelect = (productBarcode: string, barem: string | null) => {
@@ -3470,7 +3544,8 @@ export default function OrderCockpit() {
               <div className="p-6 overflow-y-auto custom-scrollbar bg-white flex-1 space-y-6">
                 
                 {/* SORULAR */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-stone-50 p-5 rounded-2xl border border-stone-100">
+                {/* SORULAR */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-stone-50 p-5 rounded-2xl border border-stone-100">
                   <div>
                     <label className="block text-xs font-black text-stone-700 uppercase tracking-wider mb-2">
                       A. Kaç günlük stok sipariş etmek istersiniz?
@@ -3500,6 +3575,42 @@ export default function OrderCockpit() {
                       {[20, 30, 45, 60].map(d => (
                         <button key={d} onClick={() => setAiMaxDays(d)} className={cn("px-2.5 py-1 text-[10px] font-extrabold rounded-md border", aiMaxDays === d ? "bg-violet-600 border-violet-600 text-white" : "bg-white border-stone-200 text-stone-500 hover:border-stone-300")}>
                           {d}G
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-black text-stone-700 uppercase tracking-wider mb-2">
+                      C. Aylık Stok Maliyeti Oranı (%)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="20" 
+                        step="0.5" 
+                        value={aiMonthlyCarryingCost} 
+                        onChange={e => {
+                          const val = parseFloat(e.target.value) || 0;
+                          setAiMonthlyCarryingCost(val);
+                          localStorage.setItem('nexus_ai_carrying_cost', String(val));
+                        }} 
+                        className="flex-1 accent-violet-600 h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer" 
+                      />
+                      <span className="text-sm font-black text-violet-750 w-16 text-right">%{aiMonthlyCarryingCost}</span>
+                    </div>
+                    <div className="flex gap-1.5 mt-2.5">
+                      {[2, 3, 5, 8, 10].map(c => (
+                        <button 
+                          key={c} 
+                          onClick={() => {
+                            setAiMonthlyCarryingCost(c);
+                            localStorage.setItem('nexus_ai_carrying_cost', String(c));
+                          }} 
+                          className={cn("px-2.5 py-1 text-[10px] font-extrabold rounded-md border", aiMonthlyCarryingCost === c ? "bg-violet-600 border-violet-600 text-white" : "bg-white border-stone-200 text-stone-500 hover:border-stone-300")}
+                        >
+                          %{c}
                         </button>
                       ))}
                     </div>
@@ -3616,6 +3727,15 @@ export default function OrderCockpit() {
                                           Önbellek
                                         </span>
                                       )}
+                                      {r.whyData && (
+                                        <button 
+                                          onClick={() => setWhyItem(r)}
+                                          className="px-1.5 py-0.5 rounded text-[8px] font-black bg-violet-50 text-violet-600 border border-violet-200 hover:bg-violet-100 hover:border-violet-300 transition-colors shrink-0 cursor-pointer"
+                                          title="Neden bu barem önerildi?"
+                                        >
+                                          Neden?
+                                        </button>
+                                      )}
                                     </div>
                                     <button 
                                       onClick={() => handleDeleteResult(r.barkod)}
@@ -3709,6 +3829,168 @@ export default function OrderCockpit() {
                     <Check size={14} /> Onayla ve Sepete Aktar
                   </button>
                 </div>
+              </div>
+
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {whyItem && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div initial={{ scale: 0.95, y: 15 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl border border-stone-200 shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden max-h-[90vh]">
+              
+              {/* Header */}
+              <div className="p-6 border-b border-stone-100 flex items-center justify-between bg-stone-50">
+                <div>
+                  <h3 className="text-sm font-black text-stone-850 truncate max-w-[450px]" title={whyItem.ad}>
+                    {whyItem.ad}
+                  </h3>
+                  <p className="text-[10px] font-mono text-stone-400 mt-1">Barkod: {whyItem.barkod}</p>
+                </div>
+                <button 
+                  onClick={() => setWhyItem(null)}
+                  className="h-8 w-8 rounded-full border border-stone-200 bg-white hover:bg-stone-50 text-stone-500 hover:text-stone-800 flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 text-left">
+                
+                {/* 1. Ürün Durumu */}
+                <div>
+                  <h4 className="text-xs font-black text-stone-700 uppercase tracking-wider mb-3">1. Ürün Durum Özeti</h4>
+                  <div className="grid grid-cols-3 gap-4 bg-stone-50 p-4 rounded-2xl border border-stone-100/50">
+                    <div>
+                      <span className="block text-[10px] text-stone-400 font-extrabold uppercase">Mevcut Stok</span>
+                      <span className="text-sm font-black text-stone-800">{whyItem.stok} Adet</span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] text-stone-400 font-extrabold uppercase">Aylık Hız</span>
+                      <span className="text-sm font-black text-stone-800">{whyItem.hiz ? whyItem.hiz.toFixed(1) : 0} Adet/ay</span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] text-stone-400 font-extrabold uppercase">Saf İhtiyaç (Hedef {whyItem.whyData?.targetDays} Gün)</span>
+                      <span className="text-sm font-black text-violet-750">{whyItem.whyData?.need} Adet</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Karar Analizi */}
+                {whyItem.whyData && (
+                  <>
+                    <div>
+                      <h4 className="text-xs font-black text-stone-700 uppercase tracking-wider mb-3">2. AI Karar Gerekçesi</h4>
+                      <div className="bg-violet-50/30 border border-violet-100 p-4 rounded-2xl space-y-2 text-xs">
+                        <p className="text-stone-700 leading-relaxed font-semibold">
+                          Standart hedefiniz doğrultusunda almanız gereken saf ihtiyaç <strong>{whyItem.whyData.need} adet</strong> olarak belirlenmiştir. 
+                          {whyItem.secilenBarem ? (
+                            whyItem.secilenBarem === whyItem.whyData.baselineBarem ? (
+                              <>
+                                {" "}Sistem, ihtiyacınızı karşılamak için en uygun referans baremin <strong>{whyItem.secilenBarem}</strong> olduğunu belirlemiştir. 
+                                Bu doğrultuda sipariş miktarınız baremin ana miktarı olan <strong>{whyItem.onerilen} adet</strong> olarak ayarlanmış ve +{(parseInt(whyItem.secilenBarem.split('+')[1]) || 0)} bedava ürün kazanılmıştır.
+                              </>
+                            ) : (
+                              <>
+                                {" "}Sistem, mevcut baremleri karşılaştırdığında <strong>{whyItem.secilenBarem}</strong> baremine geçmeyi finansal olarak daha avantajlı bulmuştur. 
+                                Bu kararla sipariş miktarınız <strong>{whyItem.onerilen} adete</strong> yükseltilmiştir.
+                              </>
+                            )
+                          ) : (
+                            <>
+                              {" "}Mevcut hiçbir üst bareme geçmek, belirlediğiniz gün sınırını aşması veya ekstra stok maliyetinin iskonto kazancından fazla olması nedeniyle avantajlı bulunmamıştır. 
+                              Bu nedenle saf ihtiyaç miktarı olan <strong>{whyItem.onerilen} adet</strong> sipariş önerilmiştir.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 3. Barem Karşılaştırma Listesi */}
+                    <div>
+                      <h4 className="text-xs font-black text-stone-700 uppercase tracking-wider mb-3">3. Barem Karşılaştırma Analizi</h4>
+                      <div className="space-y-3">
+                        {whyItem.whyData.barems.map((b: any, bIdx: number) => {
+                          const isSelected = whyItem.secilenBarem === b.raw;
+                          return (
+                            <div key={bIdx} className={cn(
+                              "p-4 rounded-2xl border text-xs flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all",
+                              isSelected 
+                                ? "bg-emerald-50/40 border-emerald-200" 
+                                : b.status.startsWith('rejected') 
+                                  ? "bg-stone-50/50 border-stone-200" 
+                                  : "bg-white border-stone-200"
+                            )}>
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded-lg text-[10px] font-black border",
+                                    isSelected 
+                                      ? "bg-emerald-600 border-emerald-700 text-white" 
+                                      : "bg-stone-200 border-stone-300 text-stone-700"
+                                  )}>
+                                    {b.raw} Baremi
+                                  </span>
+                                  {isSelected && (
+                                    <span className="text-[10px] font-black text-emerald-600 flex items-center gap-0.5">
+                                      ✓ Seçilen Karar
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-stone-500 font-medium">
+                                  Net Birim Fiyat: <strong className="text-stone-700">{b.netPrice.toFixed(2)} TL</strong> 
+                                  {whyItem.whyData.baselineBarem !== b.raw && (
+                                    <> (Referans fiyata göre Getiri: <strong className="text-emerald-600 font-extrabold">%{(b.gainPct * 100).toFixed(1)}</strong>)</>
+                                  )}
+                                </p>
+                              </div>
+
+                              <div className="text-left md:text-right shrink-0">
+                                {b.status === 'baseline_covered' ? (
+                                  <div className="space-y-0.5">
+                                    <span className="block text-[10px] font-bold text-stone-500">Referans Barem</span>
+                                    <span className="text-[9px] text-stone-400 font-semibold">Saf ihtiyacınızı karşılayan taban alım.</span>
+                                  </div>
+                                ) : b.status === 'rejected_max_days' ? (
+                                  <div className="space-y-0.5">
+                                    <span className="block text-[10px] font-bold text-amber-600">❌ Aşılan Sınır: {b.reason}</span>
+                                    <span className="text-[9px] text-stone-400 font-semibold">Belirlenen maksimum gün sınırını aşıyor.</span>
+                                  </div>
+                                ) : b.status === 'rejected_carrying_cost' ? (
+                                  <div className="space-y-0.5">
+                                    <span className="block text-[10px] font-bold text-red-500">❌ Finansal Olarak Verimsiz</span>
+                                    <span className="text-[9px] text-stone-400 font-semibold">Getiri: %{(b.gainPct * 100).toFixed(1)} | Stok Maliyeti: <span className="text-red-650 font-extrabold text-red-600">%{(b.carryingCostPct * 100).toFixed(1)}</span></span>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    <span className="block text-[10px] font-bold text-emerald-600">✓ Karlı (Net Getiri: %{(b.netReturn * 100).toFixed(1)})</span>
+                                    <span className="text-[9px] text-stone-400 font-semibold">Getiri: %{(b.gainPct * 100).toFixed(1)} | Stok Maliyeti: <span className="text-red-650 font-extrabold text-red-600">%{(b.carryingCostPct * 100).toFixed(1)}</span></span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-stone-100 bg-stone-50 flex justify-end">
+                <button 
+                  onClick={() => setWhyItem(null)}
+                  className="h-10 px-6 rounded-xl bg-stone-900 hover:bg-stone-850 text-white font-extrabold text-xs shadow-md cursor-pointer"
+                >
+                  Kapat
+                </button>
               </div>
 
             </motion.div>
