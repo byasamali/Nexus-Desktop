@@ -1724,6 +1724,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
     let depoId = activeTabObj?.depoId || '';
+    if (depoId === 'as') depoId = 'as_ecza';
     if (!depoId && activeTabObj?.displayUrl) {
       const url = activeTabObj.displayUrl.toLowerCase();
       if (url.includes('asecza.com.tr')) depoId = 'as_ecza';
@@ -1857,6 +1858,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     // 2. Get active tab and depoId
     const activeTabObj = tabs.find(t => t.id === activeTabId);
     let depoId = activeTabObj?.depoId || '';
+    if (depoId === 'as') depoId = 'as_ecza';
     if (!depoId && activeTabObj?.displayUrl) {
       const url = activeTabObj.displayUrl.toLowerCase();
       if (url.includes('asecza.com.tr')) depoId = 'as_ecza';
