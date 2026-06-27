@@ -47,7 +47,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
     const [subTab, setSubTab] = useState<'flagged' | 'non_pharma'>('flagged');
 
     // Canlı sorgu state'leri
-    const [queryWarehouse, setQueryWarehouse] = useState<'as' | 'gek'>('as');
+    const [queryWarehouse, setQueryWarehouse] = useState<'as' | 'gek' | 'alliance'>('as');
     const [selectedBarcodes, setSelectedBarcodes] = useState<Set<string>>(new Set());
     const [queryProgress, setQueryProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
     const [isQuerying, setIsQuerying] = useState(false);
@@ -95,6 +95,24 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                         }
                     }
 
+                    // 2.5. Load Alliance Siparisler
+                    const rawAllianceSiparisler = await (window as any).go.main.App.LoadLocalJSON(gln, "alliance_siparisler.json");
+                    if (rawAllianceSiparisler && rawAllianceSiparisler !== '{}') {
+                        const parsed = JSON.parse(rawAllianceSiparisler);
+                        if (Array.isArray(parsed)) {
+                            parsed.forEach((entry: any) => {
+                                if (entry.barkod && entry.durum === 'success') {
+                                    mergedCache[entry.barkod] = {
+                                        fiyat_etiket: entry.fiyat_etiket || 0,
+                                        fiyat_depocu: entry.fiyat_depocu || 0,
+                                        date: entry.tarih || '',
+                                        depo: entry.depo || 'Alliance'
+                                    };
+                                }
+                            });
+                        }
+                    }
+
                     // 3. Load AS query cache
                     const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, "as_ecza_query_cache.json");
                     if (cacheStr && cacheStr !== '{}') {
@@ -119,6 +137,20 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                                 fiyat_depocu: legacyGekCache[barcode].fiyat_depocu || legacyGekCache[barcode].fiyat_depocu_live || 0,
                                 date: legacyGekCache[barcode].date || '',
                                 depo: legacyGekCache[barcode].depo || 'GEK'
+                            };
+                        });
+                    }
+
+                    // 5. Load Alliance query cache
+                    const allianceCacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, "alliance_query_cache.json");
+                    if (allianceCacheStr && allianceCacheStr !== '{}') {
+                        const legacyAllianceCache = JSON.parse(allianceCacheStr);
+                        Object.keys(legacyAllianceCache).forEach(barcode => {
+                            mergedCache[barcode] = {
+                                fiyat_etiket: legacyAllianceCache[barcode].fiyat_etiket || 0,
+                                fiyat_depocu: legacyAllianceCache[barcode].fiyat_depocu || 0,
+                                date: legacyAllianceCache[barcode].date || '',
+                                depo: legacyAllianceCache[barcode].depo || 'Alliance'
                             };
                         });
                     }
@@ -274,15 +306,17 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
         if (selectedBarcodes.size === 0) return;
         
         let hiddenWebview: any = null;
-        const targetDomain = queryWarehouse === 'gek' ? 'gek.org.tr' : 'asecza.com.tr';
-        const warehouseName = queryWarehouse === 'gek' ? 'Güney Ecza (GEK)' : 'AS Ecza';
+        const targetDomain = queryWarehouse === 'gek' ? 'gek.org.tr' : queryWarehouse === 'alliance' ? 'alliance' : 'asecza.com.tr';
+        const warehouseName = queryWarehouse === 'gek' ? 'Güney Ecza (GEK)' : queryWarehouse === 'alliance' ? 'Alliance Healthcare' : 'AS Ecza';
         
         if (webviewRefs && webviewRefs.current) {
             for (const [id, el] of Object.entries(webviewRefs.current)) {
                 if (el && typeof el.executeJavaScript === 'function') {
                     try {
                         const url: string = await el.executeJavaScript('location.href');
-                        if (url.includes(targetDomain) || (queryWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis'))) {
+                        if (url.includes(targetDomain) || 
+                            (queryWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                            (queryWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
                             hiddenWebview = el;
                             break;
                         }
@@ -330,7 +364,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
         const total = barcodesArray.length;
 
         // Önbelleği yükle
-        const cacheFilename = queryWarehouse === 'gek' ? "gek_query_cache.json" : "as_ecza_query_cache.json";
+        const cacheFilename = queryWarehouse === 'gek' ? "gek_query_cache.json" : queryWarehouse === 'alliance' ? "alliance_query_cache.json" : "as_ecza_query_cache.json";
         let cache: Record<string, any> = {};
         try {
             if ((window as any).go?.main?.App?.LoadLocalJSON) {
@@ -733,6 +767,166 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                         }
                     }));
 
+                } else if (queryWarehouse === 'alliance') {
+                    // ── Alliance Healthcare Canlı Sorgu ──
+                    const barcodeJson = JSON.stringify(cleanBarcode);
+                    
+                    const queryResult: any = await hiddenWebview.executeJavaScript(`
+                      (async function() {
+                        try {
+                          const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+                          const sr = await fetch(sUrl, {
+                            method: "POST",
+                            headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                            credentials: "include",
+                            body: JSON.stringify({ RequestedPage: 1, SearchText: ${barcodeJson} })
+                          });
+                          if (!sr.ok) return { error: (sr.status === 401 || sr.status === 403) ? 'login_required' : 'search_failed', status: sr.status };
+                          const sd = await sr.json();
+                          if (!Array.isArray(sd) || sd.length === 0) return { error: 'not_found' };
+                          const item = sd[0];
+
+                          // Fetch details page HTML
+                          const dUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/ItemDetailv2";
+                          const dr = await fetch(dUrl, {
+                            method: "POST",
+                            headers: { "content-type": "application/json; charset=UTF-8", accept: "text/html, */*; q=0.01", "x-requested-with": "XMLHttpRequest" },
+                            credentials: "include",
+                            body: JSON.stringify({ ItemID: String(item.ID), LoadSimple: true })
+                          });
+                          let detailHtml = "";
+                          let stok = 0;
+                          let fiyat_depocu = 0;
+                          let fiyat_etiket = 0;
+                          
+                          if (dr.ok) {
+                            detailHtml = await dr.text();
+                            const match = detailHtml.match(/data-item="([^"]+)"/);
+                            if (match && match[1]) {
+                              try {
+                                const decoded = atob(match[1]);
+                                const parsedItem = JSON.parse(decoded);
+                                stok = Number(parsedItem.QA) || 0;
+                                fiyat_depocu = parsedItem.PriceTag ? (Number(parsedItem.PriceTag.SalesPrice) || 0) : 0;
+                                fiyat_etiket = parsedItem.PriceTag ? (Number(parsedItem.PriceTag.ListPrice) || 0) : 0;
+                              } catch(e) {}
+                            }
+                          }
+
+                          return {
+                            ok: true,
+                            kod: String(item.ID || ''),
+                            ad: String(item.Name || ''),
+                            stok: stok,
+                            fiyat_depocu: fiyat_depocu,
+                            fiyat_etiket: fiyat_etiket,
+                            rawItem: item,
+                            detailHtml
+                          };
+                        } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+                      })()
+                    `);
+
+                    if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                        await (window as any).go.main.App.SaveLocalJSON(gln, "son_sorgu_ham_veri.json", JSON.stringify({
+                            barkod: barcode,
+                            urun_adi: name,
+                            warehouse: 'Alliance',
+                            queryResult
+                        }, null, 2));
+                    }
+
+                    if (queryResult.error) {
+                        if (queryResult.error === 'login_required') {
+                            alert("Alliance Healthcare oturumunuz sonlanmış. Lütfen giriş yapıp tekrar deneyin.");
+                            break;
+                        }
+                        throw new Error(queryResult.error === 'not_found' ? 'Ürün Bulunamadı' : queryResult.error);
+                    }
+
+                    const dsfVal = queryResult.fiyat_depocu || 0;
+                    const psfVal = queryResult.fiyat_etiket || dsfVal * 1.25;
+                    const stokVal = queryResult.stok || 0;
+
+                    const mfList: string[] = [];
+                    const netList: string[] = [];
+
+                    cache[barcode] = {
+                        date: todayStr,
+                        stok: stokVal,
+                        fiyat_depocu: dsfVal,
+                        fiyat_etiket: psfVal,
+                        mf_baremleri: mfList,
+                        net_fiyatlar: netList,
+                        kod: queryResult.kod || '',
+                        depo: 'Alliance'
+                    };
+
+                    if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                        await (window as any).go.main.App.SaveLocalJSON(gln, cacheFilename, JSON.stringify(cache));
+                    }
+
+                    // SQLite veritabanını güncelle
+                    if ((window as any).go?.main?.App?.RunCategoryAction) {
+                        await (window as any).go.main.App.RunCategoryAction(
+                            "update-live-data",
+                            JSON.stringify({
+                                barcode,
+                                data: {
+                                    dsf: dsfVal,
+                                    psf: psfVal,
+                                    mf_baremleri: JSON.stringify([])
+                                }
+                            })
+                        );
+                    }
+
+                    // Log dosyasına ekle
+                    try {
+                        const entry = {
+                            tarih: todayStr,
+                            barkod: barcode,
+                            urun_adi: name,
+                            miktar: 0,
+                            urun_kodu: queryResult.kod || '',
+                            fiyat_etiket: +psfVal.toFixed(2),
+                            fiyat_depocu: +dsfVal.toFixed(2),
+                            mf1: null,
+                            mf2: null,
+                            mf3: null,
+                            net_fiyat1: null,
+                            net_fiyat2: null,
+                            net_fiyat3: null,
+                            stok_durumu: stokVal,
+                            kdv: 1,
+                            firma_adi: "",
+                            urun_tipi: "Itriyat",
+                            durum: 'success',
+                            depo: 'Alliance'
+                        };
+
+                        const rawAlliance = await (window as any).go.main.App.LoadLocalJSON(gln, 'alliance_siparisler.json');
+                        let allianceList = [];
+                        if (rawAlliance && rawAlliance !== '{}') {
+                            const parsed = JSON.parse(rawAlliance);
+                            if (Array.isArray(parsed)) allianceList = parsed;
+                        }
+                        allianceList.push(entry);
+                        await (window as any).go.main.App.SaveLocalJSON(gln, 'alliance_siparisler.json', JSON.stringify(allianceList, null, 2));
+                    } catch (logErr) {
+                        console.error("Failed to append order result", logErr);
+                    }
+
+                    setCacheData(prev => ({
+                        ...prev,
+                        [barcode]: {
+                            fiyat_etiket: psfVal,
+                            fiyat_depocu: dsfVal,
+                            date: todayStr,
+                            depo: 'Alliance'
+                        }
+                    }));
+
                 } else {
                     // ── AS Ecza Canlı Sorgu ──
                     const barcodeJson = JSON.stringify(barcode);
@@ -1046,7 +1240,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                     <div className="flex items-center gap-4">
                         <div className="w-8 h-8 border-4 border-amber-200 border-t-amber-500 rounded-full animate-spin"></div>
                         <div>
-                            <p className="text-sm font-bold text-slate-800">{queryWarehouse === 'gek' ? 'Güney Ecza (GEK)' : 'AS Ecza'} Canlı Sorgu Yapılıyor ({queryProgress.current}/{queryProgress.total})</p>
+                            <p className="text-sm font-bold text-slate-800">{queryWarehouse === 'gek' ? 'Güney Ecza (GEK)' : queryWarehouse === 'alliance' ? 'Alliance Healthcare' : 'AS Ecza'} Canlı Sorgu Yapılıyor ({queryProgress.current}/{queryProgress.total})</p>
                             <p className="text-xs text-slate-500 mt-0.5">Sorgulanan Ürün: <span className="font-bold text-amber-600">{queryProgress.currentName}</span></p>
                         </div>
                     </div>
@@ -1069,11 +1263,12 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                             <select
                                 disabled={isQuerying}
                                 value={queryWarehouse}
-                                onChange={(e) => setQueryWarehouse(e.target.value as 'as' | 'gek')}
+                                onChange={(e) => setQueryWarehouse(e.target.value as 'as' | 'gek' | 'alliance')}
                                 className="text-xs font-black text-slate-700 outline-none cursor-pointer bg-transparent"
                             >
                                 <option value="as">AS Ecza</option>
                                 <option value="gek">Güney Ecza (GEK)</option>
+                                <option value="alliance">Alliance Healthcare</option>
                             </select>
                         </div>
                     </div>
@@ -1085,7 +1280,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                             isQuerying ? "opacity-55 cursor-not-allowed" : ""
                         )}
                     >
-                        <Play size={15} /> Seçilenleri {queryWarehouse === 'as' ? 'AS Ecza\'dan' : 'GEK\'ten'} Sorgula
+                        <Play size={15} /> Seçilenleri {queryWarehouse === 'as' ? "AS Ecza'dan" : queryWarehouse === 'alliance' ? "Alliance Healthcare'den" : "GEK'ten"} Sorgula
                     </button>
                 </div>
             )}

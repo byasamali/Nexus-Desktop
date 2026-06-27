@@ -1720,6 +1720,96 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     }
   }, [tabs, activeTabId]);
 
+  // ── Alliance Healthcare Sepete Ekleme ──────────────────────────────────────
+  const orderAllianceBarcode = useCallback(async (barcode: string, qty: number): Promise<any> => {
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    if (!activeTabObj) return null;
+
+    const webview = webviewRefs.current[activeTabId];
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      console.warn('[Depo] executeJavaScript desteklenmiyor - webview gerekli');
+      return null;
+    }
+
+    let cleanBarcode = barcode;
+    if (cleanBarcode && cleanBarcode.length === 14 && cleanBarcode.startsWith('0')) {
+      cleanBarcode = cleanBarcode.substring(1);
+    }
+
+    const script = `
+      (async function() {
+        try {
+          // 1. Arama
+          const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+          const sr = await fetch(sUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+            credentials: "include",
+            body: JSON.stringify({ RequestedPage: 1, SearchText: ${JSON.stringify(cleanBarcode)} })
+          });
+          if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
+          if (!sr.ok) return { error: 'search_failed', status: sr.status };
+          const sd = await sr.json();
+          if (!Array.isArray(sd) || sd.length === 0) return { error: 'urun_bulunamadi' };
+          const item = sd[0];
+          const itemId = String(item.ID || '');
+          if (!itemId) return { error: 'urun_id_bulunamadi' };
+
+          // 2. Detay Çek
+          const dUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/ItemDetailv2";
+          const dr = await fetch(dUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json; charset=UTF-8", accept: "text/html, */*; q=0.01", "x-requested-with": "XMLHttpRequest" },
+            credentials: "include",
+            body: JSON.stringify({ ItemID: itemId, LoadSimple: true })
+          });
+          if (dr.status === 401 || dr.status === 403) return { error: 'login_required' };
+          if (!dr.ok) return { error: 'detail_failed', status: dr.status };
+          const detailHtml = await dr.text();
+
+          // 3. Parse ItemString & OfferString
+          const itemStringMatch = detailHtml.match(/itemstring=["']([^"']+)["']/i);
+          const offerStringMatch = detailHtml.match(/offerstring=["']([^"']+)["']/i);
+          if (!itemStringMatch || !offerStringMatch) {
+            return { error: 'detail_strings_missing' };
+          }
+          const itemString = itemStringMatch[1];
+          const offerString = offerStringMatch[1];
+
+          // 4. Sepete Ekle
+          const basketUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/AddItemToBasket";
+          const basketResp = await fetch(basketUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json; charset=UTF-8", accept: "*/*", "x-requested-with": "XMLHttpRequest" },
+            credentials: "include",
+            body: JSON.stringify({
+              ItemString: itemString,
+              OfferString: offerString,
+              Quantity: String(${qty}),
+              SupplierControlParam: false
+            })
+          });
+          if (basketResp.status === 401 || basketResp.status === 403) return { error: 'login_required' };
+          if (!basketResp.ok) return { error: 'add_to_basket_failed', status: basketResp.status };
+          
+          const data = await basketResp.json().catch(() => null);
+          return { ok: true, ad: item.Name || item.ad || ${JSON.stringify(barcode)}, data };
+        } catch(e) {
+          return { error: String(e && e.message ? e.message : e) };
+        }
+      })()
+    `;
+
+    try {
+      const result = await webview.executeJavaScript(script);
+      console.log('[Alliance] Sipariş sonucu:', result);
+      return result;
+    } catch (err) {
+      console.error('[Alliance] executeJavaScript sipariş hatası:', err);
+      return { error: String(err) };
+    }
+  }, [tabs, activeTabId]);
+
   // ── Barkoda çift tıklama ───────────────────────────────────────────────────
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
@@ -1857,6 +1947,45 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       return;
     }
 
+    // ── Alliance aktifse ────────────────────────────────────────────────────
+    if (depoId === 'alliance') {
+      const item = cart[barcode];
+      if (!item || item.qty <= 0) {
+        setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      setToast({ id: Date.now(), message: `⏳ Alliance'da ${barcode} için sipariş veriliyor...`, type: 'loading' });
+      const result = await orderAllianceBarcode(barcode, item.qty);
+
+      if (!result) {
+        setToast({ id: Date.now(), message: '⚠️ Sipariş başlatılamadı (webview hazır değil)', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+      if (result.error === 'login_required') {
+        setToast({ id: Date.now(), message: '🔑 Alliance oturumu gerekli — lütfen giriş yapın', type: 'error' });
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+      if (result.error === 'urun_bulunamadi') {
+        setToast({ id: Date.now(), message: `❌ Alliance'da ürün bulunamadı: ${barcode}`, type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+      if (result.error) {
+        setToast({ id: Date.now(), message: `❌ Sipariş hatası: ${result.error}`, type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      // Başarılı
+      setToast({ id: Date.now(), message: `✅ ${result.ad || barcode} Alliance sepetine başarıyla eklendi!`, type: 'success' });
+      setTimeout(() => setToast(null), 6000);
+      return;
+    }
+
     // ── AS / Selcuk / Nevzat / Cam aktifse ──────────────────────────────────
     if (depoId === 'as_ecza' || depoId === 'selcuk' || depoId === 'nevzat' || depoId === 'cam') {
       const item = cart[barcode];
@@ -1874,13 +2003,13 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     // Diğer depolar için uyar
     setToast({ id: Date.now(), message: `⚠️ ${activeTabObj?.title || 'Bu depo'} için otomatik sipariş desteklenmiyor.`, type: 'error' });
     setTimeout(() => setToast(null), 4000);
-  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode, orderFarmazonBarcode, depolar]);
+  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode, orderFarmazonBarcode, orderAllianceBarcode, depolar]);
 
   // ── Toplu Fiyat ve Stok Sorgulama (Aktif Sekmeye Göre Dinamik) ─────────────
   const triggerWarehouseBulkQuery = useCallback(async () => {
     // 1. Get all barcodes from cart that are inCart and qty > 0
     const barcodes = Object.entries(cart)
-      .filter(([, v]) => v.inCart && v.qty > 0)
+      .filter(([, v]) => (v as any).inCart && (v as any).qty > 0)
       .map(([barkod]) => barkod);
 
     if (barcodes.length === 0) {
