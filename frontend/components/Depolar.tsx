@@ -1723,20 +1723,53 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   // ── Barkoda çift tıklama ───────────────────────────────────────────────────
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
-    let depoId = activeTabObj?.depoId || '';
-    if (depoId === 'as') depoId = 'as_ecza';
-    if (!depoId && activeTabObj?.displayUrl) {
+    let depoId = '';
+
+    // 1. Try matching by activeTabObj.displayUrl (primary indicator)
+    if (activeTabObj?.displayUrl) {
       const url = activeTabObj.displayUrl.toLowerCase();
-      if (url.includes('asecza.com.tr')) depoId = 'as_ecza';
-      else if (url.includes('selcukecza.com.tr')) depoId = 'selcuk';
-      else if (url.includes('nevzatecza.com.tr')) depoId = 'nevzat';
-      else if (url.includes('camecza.com')) depoId = 'cam';
-      else if (url.includes('gek.org.tr')) depoId = 'gek';
-      else if (url.includes('bek.org.tr')) depoId = 'bek';
-      else if (url.includes('iskoop.org')) depoId = 'iskoop';
-      else if (url.includes('sancakecza.com')) depoId = 'sancak';
-      else if (url.includes('alliance-healthcare.com')) depoId = 'alliance';
-      else if (url.includes('farmazon.com.tr')) depoId = 'farmazon';
+      if (url.includes('asecza.com.tr') || url.includes('asecza')) depoId = 'as_ecza';
+      else if (url.includes('selcukecza.com.tr') || url.includes('selcukecza')) depoId = 'selcuk';
+      else if (url.includes('nevzatecza.com.tr') || url.includes('nevzatecza')) depoId = 'nevzat';
+      else if (url.includes('camecza.com') || url.includes('camecza')) depoId = 'cam';
+      else if (url.includes('gek.org.tr') || url.includes('gek.org')) depoId = 'gek';
+      else if (url.includes('bek.org.tr') || url.includes('bek.org')) depoId = 'bek';
+      else if (url.includes('iskoop.org') || url.includes('iskoop')) depoId = 'iskoop';
+      else if (url.includes('sancakecza.com') || url.includes('sancakecza')) depoId = 'sancak';
+      else if (url.includes('alliance-healthcare.com') || url.includes('alliance')) depoId = 'alliance';
+      else if (url.includes('farmazon.com.tr') || url.includes('farmazon')) depoId = 'farmazon';
+    }
+
+    // 2. Fallback to tab's depoId and lookup in depolar state array if needed
+    if (!depoId && activeTabObj?.depoId) {
+      const tId = activeTabObj.depoId;
+      if (tId === 'as' || tId === 'as_ecza') depoId = 'as_ecza';
+      else if (tId === 'selcuk') depoId = 'selcuk';
+      else if (tId === 'nevzat') depoId = 'nevzat';
+      else if (tId === 'cam') depoId = 'cam';
+      else if (tId === 'gek') depoId = 'gek';
+      else if (tId === 'bek') depoId = 'bek';
+      else if (tId === 'iskoop') depoId = 'iskoop';
+      else if (tId === 'sancak') depoId = 'sancak';
+      else if (tId === 'alliance') depoId = 'alliance';
+      else if (tId === 'farmazon') depoId = 'farmazon';
+      else {
+        // Custom generated ID (e.g. '565ifjhj'), look up url in depolar list
+        const matchedDepo = depolar.find((d: any) => d.id === tId);
+        if (matchedDepo && matchedDepo.url) {
+          const url = matchedDepo.url.toLowerCase();
+          if (url.includes('asecza') || url.includes('as_ecza')) depoId = 'as_ecza';
+          else if (url.includes('selcuk')) depoId = 'selcuk';
+          else if (url.includes('nevzat')) depoId = 'nevzat';
+          else if (url.includes('camecza') || url.includes('cam')) depoId = 'cam';
+          else if (url.includes('gek')) depoId = 'gek';
+          else if (url.includes('bek')) depoId = 'bek';
+          else if (url.includes('iskoop')) depoId = 'iskoop';
+          else if (url.includes('sancak')) depoId = 'sancak';
+          else if (url.includes('alliance')) depoId = 'alliance';
+          else if (url.includes('farmazon')) depoId = 'farmazon';
+        }
+      }
     }
 
     // ── GEK / BEK / İskoop aktifse ──────────────────────────────────────────
@@ -1840,7 +1873,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     
     // Diğer depolar için uyar
     setToast({ id: Date.now(), message: `⚠️ ${activeTabObj?.title || 'Bu depo'} için otomatik sipariş desteklenmiyor.`, type: 'error' });
-  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode, orderFarmazonBarcode]);
+    setTimeout(() => setToast(null), 4000);
+  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode, orderFarmazonBarcode, depolar]);
 
   // ── Toplu Fiyat ve Stok Sorgulama (Aktif Sekmeye Göre Dinamik) ─────────────
   const triggerWarehouseBulkQuery = useCallback(async () => {
@@ -1857,21 +1891,55 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
     // 2. Get active tab and depoId
     const activeTabObj = tabs.find(t => t.id === activeTabId);
-    let depoId = activeTabObj?.depoId || '';
-    if (depoId === 'as') depoId = 'as_ecza';
-    if (!depoId && activeTabObj?.displayUrl) {
+    let depoId = '';
+
+    // 1. Try matching by activeTabObj.displayUrl (primary indicator)
+    if (activeTabObj?.displayUrl) {
       const url = activeTabObj.displayUrl.toLowerCase();
-      if (url.includes('asecza.com.tr')) depoId = 'as_ecza';
-      else if (url.includes('selcukecza.com.tr')) depoId = 'selcuk';
-      else if (url.includes('nevzatecza.com.tr')) depoId = 'nevzat';
-      else if (url.includes('camecza.com')) depoId = 'cam';
-      else if (url.includes('gek.org.tr')) depoId = 'gek';
-      else if (url.includes('bek.org.tr')) depoId = 'bek';
-      else if (url.includes('iskoop.org')) depoId = 'iskoop';
-      else if (url.includes('sancakecza.com')) depoId = 'sancak';
-      else if (url.includes('alliance-healthcare.com')) depoId = 'alliance';
-      else if (url.includes('farmazon.com.tr')) depoId = 'farmazon';
+      if (url.includes('asecza.com.tr') || url.includes('asecza')) depoId = 'as_ecza';
+      else if (url.includes('selcukecza.com.tr') || url.includes('selcukecza')) depoId = 'selcuk';
+      else if (url.includes('nevzatecza.com.tr') || url.includes('nevzatecza')) depoId = 'nevzat';
+      else if (url.includes('camecza.com') || url.includes('camecza')) depoId = 'cam';
+      else if (url.includes('gek.org.tr') || url.includes('gek.org')) depoId = 'gek';
+      else if (url.includes('bek.org.tr') || url.includes('bek.org')) depoId = 'bek';
+      else if (url.includes('iskoop.org') || url.includes('iskoop')) depoId = 'iskoop';
+      else if (url.includes('sancakecza.com') || url.includes('sancakecza')) depoId = 'sancak';
+      else if (url.includes('alliance-healthcare.com') || url.includes('alliance')) depoId = 'alliance';
+      else if (url.includes('farmazon.com.tr') || url.includes('farmazon')) depoId = 'farmazon';
     }
+
+    // 2. Fallback to tab's depoId and lookup in depolar state array if needed
+    if (!depoId && activeTabObj?.depoId) {
+      const tId = activeTabObj.depoId;
+      if (tId === 'as' || tId === 'as_ecza') depoId = 'as_ecza';
+      else if (tId === 'selcuk') depoId = 'selcuk';
+      else if (tId === 'nevzat') depoId = 'nevzat';
+      else if (tId === 'cam') depoId = 'cam';
+      else if (tId === 'gek') depoId = 'gek';
+      else if (tId === 'bek') depoId = 'bek';
+      else if (tId === 'iskoop') depoId = 'iskoop';
+      else if (tId === 'sancak') depoId = 'sancak';
+      else if (tId === 'alliance') depoId = 'alliance';
+      else if (tId === 'farmazon') depoId = 'farmazon';
+      else {
+        // Custom generated ID (e.g. '565ifjhj'), look up url in depolar list
+        const matchedDepo = depolar.find((d: any) => d.id === tId);
+        if (matchedDepo && matchedDepo.url) {
+          const url = matchedDepo.url.toLowerCase();
+          if (url.includes('asecza') || url.includes('as_ecza')) depoId = 'as_ecza';
+          else if (url.includes('selcuk')) depoId = 'selcuk';
+          else if (url.includes('nevzat')) depoId = 'nevzat';
+          else if (url.includes('camecza') || url.includes('cam')) depoId = 'cam';
+          else if (url.includes('gek')) depoId = 'gek';
+          else if (url.includes('bek')) depoId = 'bek';
+          else if (url.includes('iskoop')) depoId = 'iskoop';
+          else if (url.includes('sancak')) depoId = 'sancak';
+          else if (url.includes('alliance')) depoId = 'alliance';
+          else if (url.includes('farmazon')) depoId = 'farmazon';
+        }
+      }
+    }
+
     if (!depoId) {
       setToast({ id: Date.now(), message: '⚠️ Lütfen aktif bir depo sekmesini seçin.', type: 'error' });
       setTimeout(() => setToast(null), 4000);
@@ -1970,10 +2038,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                     
                     return {
                       ok: true,
-                      stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
-                      fiyat_depocu: parseFloat(String(detail.depocuFiyati || '0').replace('.', '').replace(',', '.')),
-                      mfRaw: detail?.grdKampanyalar?.[0]?.mf || '',
-                      netRaw: detail?.grdKampanyalar?.[0]?.netFiyat || ''
+                      detail: detail
                     };
                   } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
                 })()
@@ -2152,16 +2217,33 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
               [barcode]: { ok: false, error: queryResult?.error || 'query_failed' }
             }));
           } else {
-            const mfList = queryResult.mfRaw ? extractSpans(queryResult.mfRaw) : [];
-            const netList = queryResult.netRaw ? extractSpans(queryResult.netRaw) : [];
-            const dsfVal = queryResult.fiyat_depocu || 0;
-            const psfVal = queryResult.ok ? dsfVal * 1.25 : 0; // fallback psf
+            let stokVal = 0;
+            let dsfVal = 0;
+            let psfVal = 0;
+            let mfList: string[] = [];
+            let netList: string[] = [];
+
+            if (queryResult.detail) {
+              const detail = queryResult.detail;
+              const mfRaw  = detail.grdKampanyalar?.[0]?.mf      || '';
+              const netRaw = detail.grdKampanyalar?.[0]?.netFiyat || '';
+              mfList = extractSpans(mfRaw);
+              netList = extractSpans(netRaw);
+
+              dsfVal = parsePrice(detail.depocuFiyati);
+              psfVal = parsePrice(detail.SonFiyat ?? detail.etiketFiyati);
+              stokVal = typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0);
+            } else {
+              stokVal = queryResult.stok || 0;
+              dsfVal = queryResult.fiyat_depocu || 0;
+              psfVal = queryResult.ok ? dsfVal * 1.25 : 0; // fallback psf
+            }
 
             setBulkQueryResult(prev => ({
               ...prev,
               [barcode]: {
                 ok: true,
-                stok: queryResult.stok,
+                stok: stokVal,
                 fiyat_depocu: dsfVal,
                 mf: mfList[0] || undefined,
                 net: parsePrice(netList[0]) || undefined
