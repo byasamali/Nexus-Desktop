@@ -152,9 +152,12 @@ const DEFAULT_DEPOLAR: Depo[] = [
   { id: 'selcuk',  ad: 'Selçuk Ecza', url: 'https://webdepo.selcukecza.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#3b82f6', enabled: true },
   { id: 'as_ecza', ad: 'AS Ecza',     url: 'https://webdepo.asecza.com.tr/',     kullanici: '', kod: '', sifre: '', renk: '#14b8a6', enabled: true },
   { id: 'nevzat',  ad: 'Nevzat Ecza', url: 'http://webdepo.nevzatecza.com.tr/',  kullanici: '', kod: '', sifre: '', renk: '#f59e0b', enabled: true },
+  { id: 'cam',     ad: 'Cam Ecza',    url: 'https://webdepo.camecza.com/',       kullanici: '', kod: '', sifre: '', renk: '#0891b2', enabled: true },
   { id: 'iskoop',  ad: 'İskoop',      url: 'https://esube.iskoop.org/',           kullanici: '', kod: '', sifre: '', renk: '#8b5cf6', enabled: true },
   { id: 'bek',     ad: 'BEK',         url: 'https://esube.bek.org.tr/',           kullanici: '', kod: '', sifre: '', renk: '#10b981', enabled: true },
   { id: 'gek',     ad: 'GEK',         url: 'https://esube.gek.org.tr/',           kullanici: '', kod: '', sifre: '', renk: '#f97316', enabled: true },
+  { id: 'sancak',  ad: 'Sancak Ecza', url: 'https://eticaret.sancakecza.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#2563eb', enabled: true },
+  { id: 'alliance',ad: 'Alliance',    url: 'https://esiparisv2.alliance-healthcare.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#dc2626', enabled: true },
 ];
 
 function loadDeletedIds(): Set<string> {
@@ -346,12 +349,14 @@ function MiniSepet({
   bulkQueryResult,
   bulkQueryLoading,
   onBulkQuery,
+  activeDepoAd = 'Aktif Depo',
 }: {
   cart: Record<string, CartItem>;
   onBarcodeDoubleClick?: (barcode: string) => void;
   bulkQueryResult?: Record<string, { ok: boolean; stok?: number; fiyat_depocu?: number; mf?: string; net?: number; error?: string }>;
   bulkQueryLoading?: boolean;
   onBulkQuery?: () => void;
+  activeDepoAd?: string;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -406,10 +411,10 @@ function MiniSepet({
                   ? "bg-stone-50 border-stone-200 text-stone-400 cursor-not-allowed"
                   : "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700 active:scale-95"
               )}
-              title="Sepetteki tüm ürünleri AS Ecza'dan sorgular"
+              title={`Sepetteki tüm ürünleri ${activeDepoAd} üzerinden sorgular`}
             >
               <RefreshCw size={10} className={cn("text-teal-600", bulkQueryLoading && "animate-spin")} />
-              {bulkQueryLoading ? "Sorgulanıyor..." : "Toplu MF Sor"}
+              {bulkQueryLoading ? "Sorgulanıyor..." : "Toplu Sorgula"}
             </button>
           )}
         </div>
@@ -423,7 +428,7 @@ function MiniSepet({
       {/* İpucu */}
       <div className="px-3 py-2 bg-teal-50/60 border-b border-teal-100 shrink-0">
         <p className="text-[10px] text-teal-700 font-medium leading-tight">
-          💡 <span className="font-bold">Barkod</span>'a tıkla → kopyala &nbsp;|&nbsp; <span className="font-bold">Çift tıkla</span> → AS Ecza'ya sipariş ver
+          💡 <span className="font-bold">Barkod</span>'a tıkla → kopyala &nbsp;|&nbsp; <span className="font-bold">Çift tıkla</span> → {activeDepoAd} sepetine ekle
         </p>
       </div>
 
@@ -1489,45 +1494,37 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     }
   }, [tabs, activeTabId, gekToken]);
 
-  // ── GEK Sepete Ekleme / Sipariş Verme ──────────────────────────────────────
-  const orderGekBarcode = useCallback(async (barcode: string, qty: number, token?: string): Promise<any> => {
+  // ── GEK / BEK / İskoop Sepete Ekleme / Sipariş Verme ───────────────────────
+  const orderGekBekIskoopBarcode = useCallback(async (barcode: string, qty: number, depoId: string): Promise<any> => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
-    const isGekTab = activeTabObj?.displayUrl?.includes('gek.org.tr');
-    if (!isGekTab) return null;
+    if (!activeTabObj) return null;
 
     const webview = webviewRefs.current[activeTabId];
     if (!webview || typeof webview.executeJavaScript !== 'function') {
-      console.warn('[GEK] executeJavaScript desteklenmiyor - webview gerekli');
+      console.warn('[Depo] executeJavaScript desteklenmiyor - webview gerekli');
       return null;
     }
 
-    const stateToken = token || gekToken || (typeof window !== 'undefined' ? localStorage.getItem('nexus_gek_token') : '') || '';
-    let usedToken = stateToken;
-    if (!usedToken || usedToken.length < 10) {
-      try {
-        const pageToken = await webview.executeJavaScript(GEK_TOKEN_SCRIPT);
-        if (pageToken && typeof pageToken === 'string' && pageToken.length > 10) {
-          console.log('[GEK] Token sayfadan okundu, uzunluk:', pageToken.length);
-          setGekToken(pageToken);
-          if (typeof window !== 'undefined') localStorage.setItem('nexus_gek_token', pageToken);
-          usedToken = pageToken;
-        }
-      } catch (e) {
-        console.warn('[GEK] Token okuma hatası:', e);
-      }
-    }
+    const tokenToUse = (depoId === 'gek' ? gekToken : depoId === 'bek' ? (typeof window !== 'undefined' ? localStorage.getItem('nexus_bek_token') : '') : (typeof window !== 'undefined' ? localStorage.getItem('nexus_iskoop_token') : '')) || '';
+    const relativeBase = depoId === 'bek' ? '/MainService/api/rfc/mat' : '/MainService/api/rfc';
 
     const script = `
       (async function() {
         try {
-          const tok = window.__gekToken || ${JSON.stringify(usedToken || '')};
+          const tok = window.__gekToken || window.__bekToken || window.__iskoopToken || ${JSON.stringify(tokenToUse)};
           if (!tok || tok.length < 10) return { error: 'token_yok' };
-          const base = '/MainService/api/rfc';
-          const h = { 'accept': 'application/json;charset=UTF-8', 'token': tok };
+          const base = ${JSON.stringify(relativeBase)};
+          const h = { 'accept': 'application/json;charset=UTF-8', 'token': tok, 'TOKEN': tok };
 
           // Adım 1: Barkod ile ürün ara
-          const sr = await fetch(base + '/mat/sm?ST=${barcode}&TYP=3',
-            { method: 'GET', headers: h, credentials: 'include' });
+          if (${JSON.stringify(depoId)} === 'bek') {
+            await fetch(base + '/ss?ST=${barcode}', { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+          } else {
+            await fetch(base + '/mat/ss?ST=${barcode}', { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+          }
+
+          const sUrl = base + (${JSON.stringify(depoId)} === 'bek' ? '/sm?ST=${barcode}&TYP=3' : '/mat/sm?ST=${barcode}&TYP=3');
+          const sr = await fetch(sUrl, { method: 'GET', headers: h, credentials: 'include' });
           if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
           if (!sr.ok) return { error: 'arama_basarisiz', status: sr.status };
           const sd = await sr.json();
@@ -1539,8 +1536,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           const ad    = String(items[0].MAKTX || items[0].AD || '');
 
           // Adım 2: Detay çek (Fiyat/PSF bilgisi için)
-          const dr = await fetch(base + '/mat/ms?MATNR=' + encodeURIComponent(matnr),
-            { method: 'POST', headers: { ...h, 'content-type': 'application/json' },
+          const dUrl = base + (${JSON.stringify(depoId)} === 'bek' ? '/ms?MATNR=' : '/mat/ms?MATNR=') + encodeURIComponent(matnr);
+          const dr = await fetch(dUrl, { method: 'POST', headers: { ...h, 'content-type': 'application/json' },
               credentials: 'include', body: '{}' });
           if (!dr.ok) return { error: 'detay_basarisiz', status: dr.status };
           const dd = await dr.json();
@@ -1588,6 +1585,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
               'accept': 'application/json;charset=UTF-8', 
               'content-type': 'application/json',
               'token': tok,
+              'TOKEN': tok,
               'sln': '1'
             },
             credentials: 'include',
@@ -1630,10 +1628,10 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
     try {
       const result = await webview.executeJavaScript(script);
-      console.log('[GEK] Sipariş sonucu:', result);
+      console.log('[Depo] Sipariş sonucu:', result);
       return result;
     } catch (err) {
-      console.error('[GEK] executeJavaScript sipariş hatası:', err);
+      console.error('[Depo] executeJavaScript sipariş hatası:', err);
       return { error: String(err) };
     }
   }, [tabs, activeTabId, gekToken]);
@@ -1642,10 +1640,10 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
-    const isGekTab = activeTabObj?.displayUrl?.includes('gek.org.tr');
+    const depoId = activeTabObj?.depoId || '';
 
-    // ── GEK sekmesi aktifse: GEK siparişi ver ──────────────────────────────
-    if (isGekTab) {
+    // ── GEK / BEK / İskoop aktifse ──────────────────────────────────────────
+    if (depoId === 'gek' || depoId === 'bek' || depoId === 'iskoop') {
       const item = cart[barcode];
       if (!item || item.qty <= 0) {
         setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
@@ -1653,76 +1651,64 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
         return;
       }
 
-      setToast({ id: Date.now(), message: `⏳ GEK'te ${barcode} için sipariş veriliyor...`, type: 'loading' });
-      const result = await orderGekBarcode(barcode, item.qty);
+      setToast({ id: Date.now(), message: `⏳ ${activeTabObj.title} için sipariş veriliyor...`, type: 'loading' });
+      const result = await orderGekBekIskoopBarcode(barcode, item.qty, depoId);
 
       if (!result) {
-        setToast({ id: Date.now(), message: '⚠️ GEK siparişi başlatılamadı (webview hazır değil)', type: 'error' });
+        setToast({ id: Date.now(), message: '⚠️ Sipariş başlatılamadı (webview hazır değil)', type: 'error' });
         setTimeout(() => setToast(null), 4000);
         return;
       }
       if (result.error === 'token_yok') {
-        setToast({ id: Date.now(), message: '🔑 GEK token bulunamadı — önce GEK\'e giriş yapın', type: 'error' });
+        setToast({ id: Date.now(), message: '🔑 Oturum token bulunamadı — önce giriş yapın', type: 'error' });
         setTimeout(() => setToast(null), 5000);
         return;
       }
       if (result.error === 'login_required') {
-        setToast({ id: Date.now(), message: '🔑 GEK oturumu gerekli — lütfen giriş yapın', type: 'error' });
+        setToast({ id: Date.now(), message: '🔑 Oturum gerekli — lütfen giriş yapın', type: 'error' });
         setTimeout(() => setToast(null), 5000);
         return;
       }
       if (result.error === 'urun_bulunamadi') {
-        setToast({ id: Date.now(), message: `❌ GEK'te ürün bulunamadı: ${barcode}`, type: 'error' });
+        setToast({ id: Date.now(), message: `❌ Depoda ürün bulunamadı: ${barcode}`, type: 'error' });
         setTimeout(() => setToast(null), 4000);
         return;
       }
       if (result.error) {
-        setToast({ id: Date.now(), message: `❌ GEK hatası: ${result.error}`, type: 'error' });
+        setToast({ id: Date.now(), message: `❌ Sipariş hatası: ${result.error}`, type: 'error' });
         setTimeout(() => setToast(null), 4000);
         return;
       }
 
-      // Başarılı — ürün sepete eklendi
+      // Başarılı
       const ad = result.ad || barcode;
       const vbelnStr = result.vbeln ? ` (Sipariş No: ${result.vbeln})` : '';
-      setToast({ id: Date.now(), message: `✅ ${ad} için GEK'e sipariş başarıyla verildi!${vbelnStr}`, type: 'success' });
+      setToast({ id: Date.now(), message: `✅ ${ad} için ${activeTabObj.title}'e sipariş başarıyla verildi!${vbelnStr}`, type: 'success' });
       setTimeout(() => setToast(null), 6000);
-      console.log('[GEK] Sipariş başarılı, tam sonuç:', result);
       return;
     }
 
-    // ── GEK sekmesi değilse: AS Ecza siparişi ────────────────────────────────
-    const item = cart[barcode];
-    if (!item || item.qty <= 0) {
-      setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
-      setTimeout(() => setToast(null), 4000);
+    // ── AS / Selcuk / Nevzat / Cam aktifse ──────────────────────────────────
+    if (depoId === 'as_ecza' || depoId === 'selcuk' || depoId === 'nevzat' || depoId === 'cam') {
+      const item = cart[barcode];
+      if (!item || item.qty <= 0) {
+        setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      setToast({ id: Date.now(), message: `⏳ ${barcode} için ${activeTabObj.title}'e sipariş veriliyor...`, type: 'loading' });
+      setPendingOrder({ barcode, qty: item.qty, timestamp: Date.now() });
       return;
     }
+    
+    // Diğer depolar için uyar
+    setToast({ id: Date.now(), message: `⚠️ ${activeTabObj?.title || 'Bu depo'} için otomatik sipariş desteklenmiyor.`, type: 'error' });
+    setTimeout(() => setToast(null), 4000);
+  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode]);
 
-    setToast({ id: Date.now(), message: `⏳ ${barcode} için AS Ecza'ya sipariş veriliyor...`, type: 'loading' });
-
-    // AS Ecza tab'ı bul veya aç
-    let asTab = tabs.find(t => t.displayUrl && t.displayUrl.includes('asecza.com.tr'));
-
-    if (!asTab) {
-      const url = 'https://webdepo.asecza.com.tr/';
-      const proxyUrl = await startProxy(url);
-      const newTab: BrowserTab = { id: randomId(), proxyUrl, displayUrl: url, title: 'AS Ecza' };
-      setTabs(prev => [...prev, newTab]);
-      asTab = newTab;
-      setActiveTabId(newTab.id);
-      await new Promise(r => setTimeout(r, 2500));
-    } else {
-      setActiveTabId(asTab.id);
-      await new Promise(r => setTimeout(r, 400));
-    }
-
-    setPendingOrder({ barcode, qty: item.qty, timestamp: Date.now() });
-  }, [cart, tabs, activeTabId, searchGekBarcode, orderGekBarcode]);
-
-  // ── Toplu AS Ecza Fiyat ve MF Sorgulama ────────────────────────────────────
-  // ── Toplu AS Ecza Fiyat ve MF Sorgulama ────────────────────────────────────
-  const triggerAsEczaBulkQuery = useCallback(async () => {
+  // ── Toplu Fiyat ve Stok Sorgulama (Aktif Sekmeye Göre Dinamik) ─────────────
+  const triggerWarehouseBulkQuery = useCallback(async () => {
     // 1. Get all barcodes from cart that are inCart and qty > 0
     const barcodes = Object.entries(cart)
       .filter(([, v]) => v.inCart && v.qty > 0)
@@ -1734,31 +1720,32 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       return;
     }
 
-    // 2. Find the AS Ecza tab
-    const asTab = tabs.find(t => t.displayUrl && t.displayUrl.includes('asecza.com.tr'));
-    if (!asTab) {
-      setToast({ id: Date.now(), message: '⚠️ Lütfen önce AS Ecza sekmesini açın ve giriş yapın.', type: 'error' });
-      setTimeout(() => setToast(null), 5000);
-      return;
-    }
-
-    const webview = webviewRefs.current[asTab.id] as any;
-    if (!webview || typeof webview.executeJavaScript !== 'function') {
-      setToast({ id: Date.now(), message: '❌ AS Ecza tarayıcı paneli hazır değil', type: 'error' });
+    // 2. Get active tab and depoId
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    const depoId = activeTabObj?.depoId || '';
+    if (!depoId) {
+      setToast({ id: Date.now(), message: '⚠️ Lütfen aktif bir depo sekmesini seçin.', type: 'error' });
       setTimeout(() => setToast(null), 4000);
       return;
     }
 
-    // Check if user is logged in (from URL)
+    const webview = webviewRefs.current[activeTabId] as any;
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      setToast({ id: Date.now(), message: '❌ Depo tarayıcı paneli hazır değil', type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    // Check login or page state based on depoId
     try {
       const currentUrl: string = await webview.executeJavaScript('location.href');
-      if (currentUrl.includes('/Login.aspx') || currentUrl.includes('login.aspx')) {
-        setToast({ id: Date.now(), message: '🔑 AS Ecza oturumu gerekli — lütfen giriş yapın', type: 'error' });
+      if (currentUrl.includes('/Login.aspx') || currentUrl.includes('login.aspx') || currentUrl.includes('/login') || currentUrl.includes('/Login')) {
+        setToast({ id: Date.now(), message: `🔑 ${activeTabObj.title} oturumu gerekli — lütfen giriş yapın`, type: 'error' });
         setTimeout(() => setToast(null), 5000);
         return;
       }
     } catch (err) {
-      setToast({ id: Date.now(), message: '❌ AS Ecza durum kontrolü başarısız oldu', type: 'error' });
+      setToast({ id: Date.now(), message: '❌ Depo durum kontrolü başarısız oldu', type: 'error' });
       setTimeout(() => setToast(null), 4000);
       return;
     }
@@ -1772,43 +1759,189 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       for (let i = 0; i < barcodes.length; i++) {
         const barcode = barcodes[i];
 
-        // Update status toast with current progress
         setToast({
           id: Date.now(),
-          message: `⏳ AS Ecza'dan sorgulanıyor... [${i + 1}/${barcodes.length}]`,
+          message: `⏳ ${activeTabObj.title}'den sorgulanıyor... [${i + 1}/${barcodes.length}]`,
           type: 'loading'
         });
 
         try {
           const barcodeJson = JSON.stringify(barcode);
-          const searchResult: any = await webview.executeJavaScript(`
-            (async function() {
-              try {
-                const params = new URLSearchParams({
-                  action: 'GetUrunler', searchText: ${barcodeJson},
-                  isInculude: 'false', isStoktakiler: 'false', siralama: 'ilacASC',
-                  marka: '', baslangicSayfasi: '0', topRowNum: '0', sayfaMaxRowAdet: '20', s: 's'
-                });
-                const resp = await fetch('/Siparis/hizlisiparis-ajax.aspx', {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
-                  credentials: 'include',
-                  body: params.toString()
-                });
-                if (!resp.ok) return { error: (resp.status === 401 || resp.status === 403) ? 'login_required' : 'search_http_' + resp.status };
-                const data = await resp.json();
-                if (data.hataId === 9 || String(data.hataId) === '9') return { error: 'login_required' };
-                if (data.hataId !== 0) return { error: data.hataStr || 'search_error' };
-                const urunler = data && data.obj && data.obj.urunler;
-                if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
-                const u = urunler[0];
-                return { kod: String(u.kodu || ''), ILACTIP: String(u.ILACTIP || ''), ad: String(u.ad || '') };
-              } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
-            })()
-          `);
+          let queryResult: any = null;
 
-          if (searchResult.error) {
-            if (searchResult.error === 'login_required') {
+          if (depoId === 'as_ecza' || depoId === 'selcuk' || depoId === 'nevzat' || depoId === 'cam') {
+            // AS/Selcuk/Nevzat/Cam family (WebDepo)
+            const searchResult = await webview.executeJavaScript(`
+              (async function() {
+                try {
+                  const params = new URLSearchParams({
+                    action: 'GetUrunler', searchText: ${barcodeJson},
+                    isInculude: 'false', isStoktakiler: 'false', siralama: 'ilacASC',
+                    marka: '', baslangicSayfasi: '0', topRowNum: '0', sayfaMaxRowAdet: '20', s: 's'
+                  });
+                  const resp = await fetch('/Siparis/hizlisiparis-ajax.aspx', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                    credentials: 'include',
+                    body: params.toString()
+                  });
+                  if (!resp.ok) return { error: (resp.status === 401 || resp.status === 403) ? 'login_required' : 'search_failed' };
+                  const data = await resp.json();
+                  if (data.hataId === 9 || String(data.hataId) === '9') return { error: 'login_required' };
+                  if (data.hataId !== 0) return { error: data.hataStr || 'search_error' };
+                  const urunler = data && data.obj && data.obj.urunler;
+                  if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+                  const u = urunler[0];
+                  return { kod: String(u.kodu || ''), ILACTIP: String(u.ILACTIP || ''), ad: String(u.ad || '') };
+                } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+              })()
+            `);
+
+            if (searchResult && !searchResult.error) {
+              await sleep(150);
+              const dParams = { kod: searchResult.kod, ILACTIP: searchResult.ILACTIP };
+              queryResult = await webview.executeJavaScript(`
+                (async function() {
+                  try {
+                    const params = new URLSearchParams({
+                      action: 'GetIlacDetay', kod: ${JSON.stringify(dParams.kod)},
+                      isEsdeger: 'false', esdeger: '', isJenerik: 'false', jenerikId: '',
+                      tip: 'null', ILACTIP: ${JSON.stringify(dParams.ILACTIP)}, kampKodu: ''
+                    });
+                    const resp = await fetch('/Ilac/IlacGetir-ajax.aspx', {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                      credentials: 'include',
+                      body: params.toString()
+                    });
+                    if (!resp.ok) return { error: 'detail_failed' };
+                    const dData = await resp.json();
+                    const detail = dData?.obj;
+                    if (!detail) return { error: 'no_detail' };
+                    
+                    return {
+                      ok: true,
+                      stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
+                      fiyat_depocu: parseFloat(String(detail.depocuFiyati || '0').replace('.', '').replace(',', '.')),
+                      mfRaw: detail?.grdKampanyalar?.[0]?.mf || '',
+                      netRaw: detail?.grdKampanyalar?.[0]?.netFiyat || ''
+                    };
+                  } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+                })()
+              `);
+            } else {
+              queryResult = searchResult;
+            }
+          } else if (depoId === 'gek' || depoId === 'bek' || depoId === 'iskoop') {
+            // GEK/BEK/Iskoop family (MainService REST API)
+            const tokenToUse = (depoId === 'gek' ? gekToken : depoId === 'bek' ? (typeof window !== 'undefined' ? localStorage.getItem('nexus_bek_token') : '') : (typeof window !== 'undefined' ? localStorage.getItem('nexus_iskoop_token') : '')) || '';
+            const relativeBase = depoId === 'bek' ? '/MainService/api/rfc/mat' : '/MainService/api/rfc';
+
+            queryResult = await webview.executeJavaScript(`
+              (async function() {
+                try {
+                  const tok = window.__gekToken || window.__bekToken || window.__iskoopToken || ${JSON.stringify(tokenToUse)};
+                  if (!tok) return { error: 'login_required' };
+                  const base = ${JSON.stringify(relativeBase)};
+                  const h = { 'accept': 'application/json;charset=UTF-8', 'token': tok, 'TOKEN': tok };
+                  
+                  // For BEK, call /ss first
+                  if (${JSON.stringify(depoId)} === 'bek') {
+                    await fetch(base + '/ss?ST=${barcode}', { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                  } else {
+                    await fetch(base + '/mat/ss?ST=${barcode}', { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                  }
+                  
+                  // Search
+                  const sUrl = base + (${JSON.stringify(depoId)} === 'bek' ? '/sm?ST=${barcode}&TYP=3' : '/mat/sm?ST=${barcode}&TYP=3');
+                  const sr = await fetch(sUrl, { method: 'GET', headers: h, credentials: 'include' });
+                  if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
+                  if (!sr.ok) return { error: 'search_failed', status: sr.status };
+                  const sd = await sr.json();
+                  const items = sd && Array.isArray(sd.ET_MAKTX) ? sd.ET_MAKTX : [];
+                  if (!items.length) return { error: 'not_found' };
+                  
+                  const matnr = String(items[0].MATNR || '');
+                  
+                  // Details
+                  const dUrl = base + (${JSON.stringify(depoId)} === 'bek' ? '/ms?MATNR=' : '/mat/ms?MATNR=') + encodeURIComponent(matnr);
+                  const dr = await fetch(dUrl, {
+                    method: 'POST', headers: { ...h, 'content-type': 'application/json' },
+                    credentials: 'include', body: '{}'
+                  });
+                  if (!dr.ok) return { error: 'detail_failed', status: dr.status };
+                  const dd = await dr.json();
+                  
+                  // Extract fields
+                  const detail = dd?.obj || dd || {};
+                  const stokVal = detail?.ET_MARC?.[0]?.LABST ?? detail?.LABST ?? 0;
+                  const rawFyt = detail?.ET_A004?.[0]?.KBETR ?? detail?.PSF ?? 0;
+                  
+                  return {
+                    ok: true,
+                    stok: Number(stokVal) || 0,
+                    fiyat_depocu: Number(rawFyt) || 0
+                  };
+                } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+              })()
+            `);
+          } else if (depoId === 'sancak') {
+            // Sancak Ecza
+            queryResult = await webview.executeJavaScript(`
+              (async function() {
+                try {
+                  const sUrl = "https://eticaret.sancakecza.com.tr/Sales/QuickSearchItems";
+                  const sParams = { Key: ${barcodeJson}, SearchType: 0, StockType: 0, Page: 1, CacheForCampaign: false, ItemScope: "0" };
+                  const sr = await fetch(sUrl, {
+                    method: "POST",
+                    headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                    credentials: "include",
+                    body: JSON.stringify(sParams)
+                  });
+                  if (!sr.ok) return { error: (sr.status === 401 || sr.status === 403) ? 'login_required' : 'search_failed', status: sr.status };
+                  const sd = await sr.json();
+                  const items = sd && Array.isArray(sd.Value) ? sd.Value : [];
+                  if (items.length === 0) return { error: 'not_found' };
+                  const item = items[0];
+                  
+                  return {
+                    ok: true,
+                    stok: Number(item.StockQty) || 0,
+                    fiyat_depocu: Number(item.Price) || 0
+                  };
+                } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+              })()
+            `);
+          } else if (depoId === 'alliance') {
+            // Alliance Healthcare
+            queryResult = await webview.executeJavaScript(`
+              (async function() {
+                try {
+                  const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+                  const sr = await fetch(sUrl, {
+                    method: "POST",
+                    headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                    credentials: "include",
+                    body: JSON.stringify({ RequestedPage: 1, SearchText: ${barcodeJson} })
+                  });
+                  if (!sr.ok) return { error: (sr.status === 401 || sr.status === 403) ? 'login_required' : 'search_failed', status: sr.status };
+                  const sd = await sr.json();
+                  if (!Array.isArray(sd) || sd.length === 0) return { error: 'not_found' };
+                  const item = sd[0];
+                  
+                  return {
+                    ok: true,
+                    stok: Number(item.StockQty) || 0,
+                    fiyat_depocu: Number(item.Price) || 0
+                  };
+                } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+              })()
+            `);
+          }
+
+          // Process final result
+          if (!queryResult || queryResult.error) {
+            if (queryResult?.error === 'login_required') {
               loginRequiredEncountered = true;
               setBulkQueryResult(prev => ({
                 ...prev,
@@ -1818,103 +1951,31 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             }
             setBulkQueryResult(prev => ({
               ...prev,
-              [barcode]: { ok: false, error: searchResult.error }
+              [barcode]: { ok: false, error: queryResult?.error || 'query_failed' }
             }));
-            await sleep(150);
-            continue;
-          }
+          } else {
+            const mfList = queryResult.mfRaw ? extractSpans(queryResult.mfRaw) : [];
+            const netList = queryResult.netRaw ? extractSpans(queryResult.netRaw) : [];
+            const dsfVal = queryResult.fiyat_depocu || 0;
+            const psfVal = queryResult.ok ? dsfVal * 1.25 : 0; // fallback psf
 
-          const { kod, ILACTIP } = searchResult;
-          const kodJson = JSON.stringify(kod);
-          const ilacTipJson = JSON.stringify(ILACTIP);
-
-          await sleep(100);
-
-          const detailResult: any = await webview.executeJavaScript(`
-            (async function() {
-              try {
-                const params = new URLSearchParams({
-                  action: 'GetIlacDetay', kod: ${kodJson},
-                  isEsdeger: 'false', esdeger: '', isJenerik: 'false', jenerikId: '',
-                  tip: 'null', ILACTIP: ${ilacTipJson}, kampKodu: ''
-                });
-                const resp = await fetch('/Ilac/IlacGetir-ajax.aspx', {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
-                  credentials: 'include',
-                  body: params.toString()
-                });
-                return resp.ok ? await resp.json() : null;
-              } catch { return null; }
-            })()
-          `);
-
-          if (!detailResult || !detailResult.obj) {
             setBulkQueryResult(prev => ({
               ...prev,
-              [barcode]: { ok: false, error: 'no_detail_data' }
+              [barcode]: {
+                ok: true,
+                stok: queryResult.stok,
+                fiyat_depocu: dsfVal,
+                mf: mfList[0] || undefined,
+                net: parsePrice(netList[0]) || undefined
+              }
             }));
-            await sleep(150);
-            continue;
-          }
 
-          const detail = detailResult.obj;
-          const mfRaw  = detail?.grdKampanyalar?.[0]?.mf      || '';
-          const netRaw = detail?.grdKampanyalar?.[0]?.netFiyat || '';
-          const mfList  = extractSpans(mfRaw);
-          const netList = extractSpans(netRaw);
-
-          const dsfVal = parsePrice(detail.depocuFiyati);
-          const psfVal = parsePrice(detail.SonFiyat ?? detail.etiketFiyati);
-
-          setBulkQueryResult(prev => ({
-            ...prev,
-            [barcode]: {
-              ok: true,
-              stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
-              fiyat_depocu: dsfVal,
-              mf: mfList[0] || undefined,
-              net: parsePrice(netList[0]) || undefined
+            // SQLite veritabanını güncel canlı verilerle güncelle (opsiyonel)
+            if (depoId === 'as_ecza') {
+              await updateDbWithLiveData(barcode, dsfVal, psfVal, mfList);
             }
-          }));
-
-          // SQLite veritabanını güncel canlı verilerle güncelle
-          await updateDbWithLiveData(barcode, dsfVal, psfVal, mfList);
-
-          // Append to local JSON database log
-          try {
-            const qtyInCart = cart[barcode]?.qty || 0;
-            const entry = {
-              tarih:        new Date().toISOString().split('T')[0],
-              barkod:       barcode,
-              urun_adi:     detail?.ad        || '',
-              miktar:       qtyInCart,
-              urun_kodu:    detail?.kod       || '',
-              fiyat_etiket: +psfVal.toFixed(2),
-              fiyat_depocu: +dsfVal.toFixed(2),
-              mf1:          mfList[0]  || null,
-              mf2:          mfList[1]  || null,
-              mf3:          mfList[2]  || null,
-              net_fiyat1:   parsePrice(netList[0]),
-              net_fiyat2:   parsePrice(netList[1]),
-              net_fiyat3:   parsePrice(netList[2]),
-              stok_durumu:  detail?.stokDurumu || 0,
-              kdv:          parseInt(detail?.kdv?.val1 || 0),
-              firma_adi:    detail?.firma?.display || "",
-              urun_tipi:    detail?.urunTipi || "",
-              durum:        'success',
-              depo:         'AS ECZA'
-            };
-
-            if (isWails) {
-              await (window as any).go.main.App.AppendOrderResult(gln, entry);
-            }
-          } catch (jsonErr) {
-            console.error('[Depolar] Toplu sorgulama JSON kayıt hatası:', jsonErr);
           }
-
         } catch (itemErr: any) {
-          console.error(`[Depolar] ${barcode} sorgulama hatası:`, itemErr);
           setBulkQueryResult(prev => ({
             ...prev,
             [barcode]: { ok: false, error: String(itemErr?.message || itemErr) }
@@ -1923,15 +1984,14 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
         await sleep(150);
       }
-
+      
       if (loginRequiredEncountered) {
-        setToast({ id: Date.now(), message: '🔑 AS Ecza oturumu zaman aşımına uğramış olabilir, lütfen giriş yapın', type: 'error' });
+        setToast({ id: Date.now(), message: `🔑 ${activeTabObj.title} oturumu zaman aşımına uğramış olabilir, lütfen giriş yapın`, type: 'error' });
         setTimeout(() => setToast(null), 5000);
       } else {
-        setToast({ id: Date.now(), message: '✅ Toplu MF sorgulama tamamlandı!', type: 'success' });
+        setToast({ id: Date.now(), message: `✅ ${activeTabObj.title} sorgulama tamamlandı!`, type: 'success' });
         setTimeout(() => setToast(null), 4000);
       }
-
     } catch (err: any) {
       console.error('[Depolar] Toplu sorgulama hatası:', err);
       setToast({ id: Date.now(), message: `❌ Toplu sorgulama başarısız: ${err?.message || err}`, type: 'error' });
@@ -1939,7 +1999,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     } finally {
       setBulkQueryLoading(false);
     }
-  }, [cart, tabs]);
+  }, [cart, tabs, activeTabId, gekToken]);
 
   // ── Sipariş tamamlandı → JSON'a kaydet + toast ────────────────────────────
   const handleOrderResult = useCallback(async (result: OrderResult) => {
@@ -2243,7 +2303,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             onBarcodeDoubleClick={handleBarcodeDoubleClick}
             bulkQueryResult={bulkQueryResult}
             bulkQueryLoading={bulkQueryLoading}
-            onBulkQuery={triggerAsEczaBulkQuery}
+            onBulkQuery={triggerWarehouseBulkQuery}
+            activeDepoAd={tabs.find(t => t.id === activeTabId)?.title || 'Aktif Depo'}
           />
         </div>
 

@@ -305,9 +305,12 @@ const injectScript = () => {
         const supplier = href.includes("selcuk") ? "selcuk"
                        : href.includes("asecza") ? "as"
                        : href.includes("nevzat") ? "nevzat"
+                       : href.includes("camecza") ? "cam"
                        : href.includes("gek")    ? "gek"
                        : href.includes("bek")    ? "bek"
                        : href.includes("iskoop") ? "iskoop"
+                       : href.includes("sancakecza") ? "sancak"
+                       : href.includes("alliance") ? "alliance"
                        : "unknown";
 
         ipcRenderer.sendToHost('depo-data-intercept', {
