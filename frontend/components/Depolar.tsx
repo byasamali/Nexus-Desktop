@@ -1446,7 +1446,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           // Token önce sayfadan, sonra argümandan
           const tok = window.__gekToken || ${JSON.stringify(usedToken || '')};
           if (!tok || tok.length < 10) return { error: 'token_yok' };
-          const base = 'https://esube.gek.org.tr/MainService/api/rfc';
+          const base = '/MainService/api/rfc';
           const h = { 'accept': 'application/json;charset=UTF-8', 'TOKEN': tok, 'sln': '1' };
 
           // Adım 1: Arama Hazırlığı (ss)
@@ -1522,7 +1522,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
         try {
           const tok = window.__gekToken || ${JSON.stringify(usedToken || '')};
           if (!tok || tok.length < 10) return { error: 'token_yok' };
-          const base = 'https://esube.gek.org.tr/MainService/api/rfc';
+          const base = '/MainService/api/rfc';
           const h = { 'accept': 'application/json;charset=UTF-8', 'token': tok };
 
           // Adım 1: Barkod ile ürün ara
