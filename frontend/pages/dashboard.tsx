@@ -552,6 +552,14 @@ export default function OrderCockpit() {
     } catch (e) {
       console.error(e);
     }
+    try {
+      const storedHide = localStorage.getItem('nexus_hide_group_headers');
+      if (storedHide) {
+        setHideGroupHeaders(storedHide === 'true');
+      }
+    } catch (e) {
+      console.error(e);
+    }
   }, []);
 
   const getDynamicBreadcrumb = (id: number) => {
@@ -643,6 +651,7 @@ export default function OrderCockpit() {
   const [visibleGroupsCount, setVisibleGroupsCount] = useState(20);
   const [filterEsdegersiz, setFilterEsdegersiz] = useState<'active' | 'passive' | 'excluded'>('active');
   const [selectedDaysLimit, setSelectedDaysLimit] = useState<number | null>(30);
+  const [hideGroupHeaders, setHideGroupHeaders] = useState<boolean>(false);
   
   // ✨ AI Sipariş Modu State'leri
   const [showAIModal, setShowAIModal] = useState(false);
@@ -2849,9 +2858,24 @@ export default function OrderCockpit() {
                             >
                               {opt.label}
                             </button>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+
+                    {/* Grup Başlıklarını Gizleme Checkbox'ı */}
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none text-[10px] font-bold text-stone-500 hover:text-stone-850 transition-colors shrink-0 h-8 px-2.5 bg-stone-50 border border-stone-200 rounded-lg">
+                      <input 
+                        type="checkbox" 
+                        checked={hideGroupHeaders} 
+                        onChange={e => {
+                          const val = e.target.checked;
+                          setHideGroupHeaders(val);
+                          localStorage.setItem('nexus_hide_group_headers', String(val));
+                        }} 
+                        className="w-3.5 h-3.5 rounded border-stone-300 text-teal-600 focus:ring-teal-500/20 cursor-pointer" 
+                      />
+                      <span>Grupları Gizle</span>
+                    </label>
 
                     {/* AI Sipariş Modu Butonu */}
                     <button
@@ -2941,6 +2965,7 @@ export default function OrderCockpit() {
                                   onAddToYokListesi={handleAddToYokListesi}
                                   onEditProductDetails={setEditingDbProduct}
                                   selectedDaysLimit={selectedDaysLimit}
+                                  hideGroupHeaders={hideGroupHeaders}
                                 />
                               ))}
                             </tbody>
@@ -4344,7 +4369,7 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
   );
 }
 
-function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit }: any) {
+function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit, hideGroupHeaders }: any) {
   const [isOpen, setIsOpen] = useState(true);
   const originalCount = grup.original_count ?? grup.detaylar.length;
   const isSingle = originalCount === 1;
@@ -4363,7 +4388,7 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
   return (
     <>
       {/* Grup Başlığı - Sadece İlaç sekmesinde ve birden fazla ürün varsa gösterilir */}
-      {(showTree) && (
+      {(!hideGroupHeaders && showTree) && (
         <tr className="bg-stone-50/50 border-t border-stone-200/60">
           <td className="relative h-10">
             {/* Dikey çizgi başlangıcı (Ağaç yapısı için) */}
@@ -4424,12 +4449,12 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
       )}
 
       {/* Ürün Satırları (TableProductRow) */}
-      {(isSingle || !showTree || isOpen) && grup.detaylar.map((urun: any, idx: number) => (
+      {(isSingle || !showTree || hideGroupHeaders || isOpen) && grup.detaylar.map((urun: any, idx: number) => (
         <TableProductRow
           key={idx}
           urun={urun}
           {...sharedProps}
-          isGrouped={!isSingle && showTree}
+          isGrouped={!hideGroupHeaders && !isSingle && showTree}
           isLastChild={idx === grup.detaylar.length - 1}
           itemCart={cart[urun.v1] || { qty: 0, mf: 0, inCart: false }}
         />
