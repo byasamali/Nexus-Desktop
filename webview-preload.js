@@ -43,6 +43,7 @@ const injectScript = () => {
             if (tok.length > 10) {
               window.__gekToken = tok;
               window.postMessage({ source: 'nexus-interceptor', type: 'gek-token', token: tok }, '*');
+              window.postMessage({ source: 'nexus-interceptor', type: 'depo-token', token: tok }, '*');
             }
           }
         }
@@ -311,6 +312,7 @@ const injectScript = () => {
                        : href.includes("iskoop") ? "iskoop"
                        : href.includes("sancakecza") ? "sancak"
                        : href.includes("alliance") ? "alliance"
+                       : href.includes("farmazon") ? "farmazon"
                        : "unknown";
 
         ipcRenderer.sendToHost('depo-data-intercept', {

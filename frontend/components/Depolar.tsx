@@ -158,6 +158,7 @@ const DEFAULT_DEPOLAR: Depo[] = [
   { id: 'gek',     ad: 'GEK',         url: 'https://esube.gek.org.tr/',           kullanici: '', kod: '', sifre: '', renk: '#f97316', enabled: true },
   { id: 'sancak',  ad: 'Sancak Ecza', url: 'https://eticaret.sancakecza.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#2563eb', enabled: true },
   { id: 'alliance',ad: 'Alliance',    url: 'https://esiparisv2.alliance-healthcare.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#dc2626', enabled: true },
+  { id: 'farmazon',ad: 'Farmazon',    url: 'https://eczaci.farmazon.com.tr/',    kullanici: '', kod: '', sifre: '', renk: '#581c87', enabled: true },
 ];
 
 function loadDeletedIds(): Set<string> {
@@ -1636,8 +1637,90 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     }
   }, [tabs, activeTabId, gekToken]);
 
-  // ── Barkoda çift tıklama → Aktif sekmeye göre GEK ara veya AS Ecza sipariş ─
+  // ── Farmazon Sepete Ekleme ─────────────────────────────────────────────────
+  const orderFarmazonBarcode = useCallback(async (barcode: string, qty: number): Promise<any> => {
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    if (!activeTabObj) return null;
 
+    const webview = webviewRefs.current[activeTabId];
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      console.warn('[Depo] executeJavaScript desteklenmiyor - webview gerekli');
+      return null;
+    }
+
+    const tokenToUse = (typeof window !== 'undefined' ? localStorage.getItem('nexus_farmazon_token') : '') || '';
+
+    const script = `
+      (async function() {
+        try {
+          const tok = window.__token || ${JSON.stringify(tokenToUse)};
+          if (!tok) return { error: 'login_required' };
+          const bearer = tok.startsWith('Bearer ') ? tok : 'Bearer ' + tok;
+          const h = {
+            'accept': 'application/json, text/plain, */*',
+            'authorization': bearer,
+            'referer': 'https://www.farmazon.com.tr/',
+            'x-sec-hed': 'F4BD0033-D533-4160-866A-7D34518B7EEE'
+          };
+
+          // Search
+          const sUrl = 'https://lab.farmazon.com.tr/api/v1/master/searchbykeyword?keyword=' + encodeURIComponent(${JSON.stringify(barcode)});
+          const sr = await fetch(sUrl, { method: 'GET', headers: h });
+          if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
+          if (!sr.ok) return { error: 'search_failed', status: sr.status };
+          
+          const sd = await sr.json();
+          const products = sd && sd.result && Array.isArray(sd.result.products) ? sd.result.products : [];
+          if (products.length === 0) return { error: 'not_found' };
+          const prod = products[0];
+
+          // Detail (Get listings)
+          const dUrl = 'https://lab.farmazon.com.tr/api/v1/Products/GetProductListings?productID=' + encodeURIComponent(String(prod.productId));
+          const dr = await fetch(dUrl, { method: 'GET', headers: h });
+          if (dr.status === 401 || dr.status === 403) return { error: 'login_required' };
+          if (!dr.ok) return { error: 'detail_failed', status: dr.status };
+          
+          const dd = await dr.json();
+          const listings = dd && dd.result && Array.isArray(dd.result.listings) ? dd.result.listings : [];
+          if (listings.length === 0) return { error: 'no_listings' };
+
+          // Sort listings by price (cheapest first)
+          const sorted = listings.filter(l => l.price != null && l.stock > 0).sort((a, b) => a.price - b.price);
+          const best = sorted.length > 0 ? sorted[0] : listings[0];
+          
+          const listingId = best.id;
+          
+          // Add to basket
+          const basketUrl = 'https://lab.farmazon.com.tr/api/v1/BasketItems/AddToBasketListing';
+          const basketResp = await fetch(basketUrl, {
+            method: 'POST',
+            headers: { ...h, 'content-type': 'application/json' },
+            body: JSON.stringify({ listingId: Number(listingId), count: Number(${qty}) })
+          });
+
+          if (!basketResp.ok) {
+            if (basketResp.status === 401 || basketResp.status === 403) return { error: 'login_required' };
+            return { error: 'add_to_basket_failed', status: basketResp.status };
+          }
+          
+          return { ok: true, ad: prod.productName };
+        } catch(e) {
+          return { error: String(e && e.message ? e.message : e) };
+        }
+      })()
+    `;
+
+    try {
+      const result = await webview.executeJavaScript(script);
+      console.log('[Farmazon] Sipariş sonucu:', result);
+      return result;
+    } catch (err) {
+      console.error('[Farmazon] executeJavaScript sipariş hatası:', err);
+      return { error: String(err) };
+    }
+  }, [tabs, activeTabId]);
+
+  // ── Barkoda çift tıklama ───────────────────────────────────────────────────
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
     const depoId = activeTabObj?.depoId || '';
@@ -1688,6 +1771,45 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       return;
     }
 
+    // ── Farmazon aktifse ────────────────────────────────────────────────────
+    if (depoId === 'farmazon') {
+      const item = cart[barcode];
+      if (!item || item.qty <= 0) {
+        setToast({ id: Date.now(), message: '⚠️ Sepette bu ürün için geçerli miktar yok', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      setToast({ id: Date.now(), message: `⏳ Farmazon'da ${barcode} için sepet aranıyor...`, type: 'loading' });
+      const result = await orderFarmazonBarcode(barcode, item.qty);
+
+      if (!result) {
+        setToast({ id: Date.now(), message: '⚠️ Sipariş başlatılamadı (webview hazır değil)', type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+      if (result.error === 'login_required') {
+        setToast({ id: Date.now(), message: '🔑 Farmazon oturumu gerekli — lütfen giriş yapın', type: 'error' });
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+      if (result.error === 'urun_bulunamadi' || result.error === 'not_found') {
+        setToast({ id: Date.now(), message: `❌ Farmazon'da ürün bulunamadı: ${barcode}`, type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+      if (result.error) {
+        setToast({ id: Date.now(), message: `❌ Sipariş hatası: ${result.error}`, type: 'error' });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      // Başarılı
+      setToast({ id: Date.now(), message: `✅ ${result.ad || barcode} Farmazon sepetine başarıyla eklendi!`, type: 'success' });
+      setTimeout(() => setToast(null), 6000);
+      return;
+    }
+
     // ── AS / Selcuk / Nevzat / Cam aktifse ──────────────────────────────────
     if (depoId === 'as_ecza' || depoId === 'selcuk' || depoId === 'nevzat' || depoId === 'cam') {
       const item = cart[barcode];
@@ -1704,8 +1826,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
     
     // Diğer depolar için uyar
     setToast({ id: Date.now(), message: `⚠️ ${activeTabObj?.title || 'Bu depo'} için otomatik sipariş desteklenmiyor.`, type: 'error' });
-    setTimeout(() => setToast(null), 4000);
-  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode]);
+  }, [cart, tabs, activeTabId, orderGekBekIskoopBarcode, orderFarmazonBarcode]);
 
   // ── Toplu Fiyat ve Stok Sorgulama (Aktif Sekmeye Göre Dinamik) ─────────────
   const triggerWarehouseBulkQuery = useCallback(async () => {
@@ -1937,6 +2058,55 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                 } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
               })()
             `);
+          } else if (depoId === 'farmazon') {
+            // Farmazon integration
+            const tokenToUse = (typeof window !== 'undefined' ? localStorage.getItem('nexus_farmazon_token') : '') || '';
+            queryResult = await webview.executeJavaScript(`
+              (async function() {
+                try {
+                  const tok = window.__token || ${JSON.stringify(tokenToUse)};
+                  if (!tok) return { error: 'login_required' };
+                  const bearer = tok.startsWith('Bearer ') ? tok : 'Bearer ' + tok;
+                  const h = {
+                    'accept': 'application/json, text/plain, */*',
+                    'authorization': bearer,
+                    'referer': 'https://www.farmazon.com.tr/',
+                    'x-sec-hed': 'F4BD0033-D533-4160-866A-7D34518B7EEE'
+                  };
+
+                  // Search
+                  const sUrl = 'https://lab.farmazon.com.tr/api/v1/master/searchbykeyword?keyword=' + encodeURIComponent(${barcodeJson});
+                  const sr = await fetch(sUrl, { method: 'GET', headers: h });
+                  if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
+                  if (!sr.ok) return { error: 'search_failed', status: sr.status };
+                  
+                  const sd = await sr.json();
+                  const products = sd && sd.result && Array.isArray(sd.result.products) ? sd.result.products : [];
+                  if (products.length === 0) return { error: 'not_found' };
+                  const prod = products[0];
+
+                  // Detail (Get listings)
+                  const dUrl = 'https://lab.farmazon.com.tr/api/v1/Products/GetProductListings?productID=' + encodeURIComponent(String(prod.productId));
+                  const dr = await fetch(dUrl, { method: 'GET', headers: h });
+                  if (dr.status === 401 || dr.status === 403) return { error: 'login_required' };
+                  if (!dr.ok) return { error: 'detail_failed', status: dr.status };
+                  
+                  const dd = await dr.json();
+                  const listings = dd && dd.result && Array.isArray(dd.result.listings) ? dd.result.listings : [];
+                  if (listings.length === 0) return { error: 'no_listings' };
+
+                  // Sort listings by price (cheapest first)
+                  const sorted = listings.filter(l => l.price != null && l.stock > 0).sort((a, b) => a.price - b.price);
+                  const best = sorted.length > 0 ? sorted[0] : listings[0];
+                  
+                  return {
+                    ok: true,
+                    stok: Number(best.stock) || 0,
+                    fiyat_depocu: Number(best.price) || 0
+                  };
+                } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
+              })()
+            `);
           }
 
           // Process final result
@@ -2139,6 +2309,23 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           setGekToken(payload.token);
           if (typeof window !== 'undefined') {
             localStorage.setItem('nexus_gek_token', payload.token);
+          }
+        }
+
+        // ── Depo Token yakalandı (Dinamik) ───────────────────────────────────
+        if (payload?.type === 'depo-token' && payload?.token) {
+          const supplier = payload.supplier || 'unknown';
+          const tok = payload.token;
+          console.log(`[Depolar] ${supplier} token alındı, uzunluk:`, tok.length);
+          if (supplier === 'gek') {
+            setGekToken(tok);
+            if (typeof window !== 'undefined') localStorage.setItem('nexus_gek_token', tok);
+          } else if (supplier === 'bek') {
+            if (typeof window !== 'undefined') localStorage.setItem('nexus_bek_token', tok);
+          } else if (supplier === 'iskoop') {
+            if (typeof window !== 'undefined') localStorage.setItem('nexus_iskoop_token', tok);
+          } else if (supplier === 'farmazon') {
+            if (typeof window !== 'undefined') localStorage.setItem('nexus_farmazon_token', tok);
           }
         }
 
