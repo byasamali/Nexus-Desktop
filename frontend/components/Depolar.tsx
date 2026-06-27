@@ -1723,7 +1723,20 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   // ── Barkoda çift tıklama ───────────────────────────────────────────────────
   const handleBarcodeDoubleClick = useCallback(async (barcode: string) => {
     const activeTabObj = tabs.find(t => t.id === activeTabId);
-    const depoId = activeTabObj?.depoId || '';
+    let depoId = activeTabObj?.depoId || '';
+    if (!depoId && activeTabObj?.displayUrl) {
+      const url = activeTabObj.displayUrl.toLowerCase();
+      if (url.includes('asecza.com.tr')) depoId = 'as_ecza';
+      else if (url.includes('selcukecza.com.tr')) depoId = 'selcuk';
+      else if (url.includes('nevzatecza.com.tr')) depoId = 'nevzat';
+      else if (url.includes('camecza.com')) depoId = 'cam';
+      else if (url.includes('gek.org.tr')) depoId = 'gek';
+      else if (url.includes('bek.org.tr')) depoId = 'bek';
+      else if (url.includes('iskoop.org')) depoId = 'iskoop';
+      else if (url.includes('sancakecza.com')) depoId = 'sancak';
+      else if (url.includes('alliance-healthcare.com')) depoId = 'alliance';
+      else if (url.includes('farmazon.com.tr')) depoId = 'farmazon';
+    }
 
     // ── GEK / BEK / İskoop aktifse ──────────────────────────────────────────
     if (depoId === 'gek' || depoId === 'bek' || depoId === 'iskoop') {
@@ -1843,7 +1856,20 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
     // 2. Get active tab and depoId
     const activeTabObj = tabs.find(t => t.id === activeTabId);
-    const depoId = activeTabObj?.depoId || '';
+    let depoId = activeTabObj?.depoId || '';
+    if (!depoId && activeTabObj?.displayUrl) {
+      const url = activeTabObj.displayUrl.toLowerCase();
+      if (url.includes('asecza.com.tr')) depoId = 'as_ecza';
+      else if (url.includes('selcukecza.com.tr')) depoId = 'selcuk';
+      else if (url.includes('nevzatecza.com.tr')) depoId = 'nevzat';
+      else if (url.includes('camecza.com')) depoId = 'cam';
+      else if (url.includes('gek.org.tr')) depoId = 'gek';
+      else if (url.includes('bek.org.tr')) depoId = 'bek';
+      else if (url.includes('iskoop.org')) depoId = 'iskoop';
+      else if (url.includes('sancakecza.com')) depoId = 'sancak';
+      else if (url.includes('alliance-healthcare.com')) depoId = 'alliance';
+      else if (url.includes('farmazon.com.tr')) depoId = 'farmazon';
+    }
     if (!depoId) {
       setToast({ id: Date.now(), message: '⚠️ Lütfen aktif bir depo sekmesini seçin.', type: 'error' });
       setTimeout(() => setToast(null), 4000);
