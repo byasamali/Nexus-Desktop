@@ -129,11 +129,11 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-slate-100 bg-slate-50/50">
-                                    <th onClick={() => handleSort('name')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">İlaç Adı{renderSortIcon('name')}</th>
-                                    <th onClick={() => handleSort('barcode')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">Barkod{renderSortIcon('barcode')}</th>
-                                    <th onClick={() => handleSort('daysInactive')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Hareketsizlik{renderSortIcon('daysInactive')}</th>
-                                    <th onClick={() => handleSort('monthlySpeed')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Aylık Hız{renderSortIcon('monthlySpeed')}</th>
-                                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-[200px]">Sipariş</th>
+                                    <th onClick={() => handleSort('name')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">İlaç Adı{renderSortIcon('name')}</th>
+                                    <th onClick={() => handleSort('barcode')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">Barkod{renderSortIcon('barcode')}</th>
+                                    <th onClick={() => handleSort('daysInactive')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Hareketsizlik{renderSortIcon('daysInactive')}</th>
+                                    <th onClick={() => handleSort('monthlySpeed')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Aylık Hız{renderSortIcon('monthlySpeed')}</th>
+                                    <th className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-[200px]">Sipariş</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -147,7 +147,7 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
 
                                     return (
                                         <tr key={item.barcode} className="hover:bg-slate-50/50 transition-colors group">
-                                            <td className="px-6 py-4">
+                                            <td className="px-3 py-1">
                                                 <div className="flex items-center gap-3">
                                                     <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
                                                         <Package size={16} />
@@ -155,7 +155,7 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                                     <p className="text-xs font-bold text-slate-800 truncate max-w-[280px]" title={item.name}>{item.name}</p>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 text-xs font-mono text-slate-500">
+                                            <td className="px-3 py-1 text-xs font-mono text-slate-500">
                                                 <button
                                                     onClick={() => {
                                                         navigator.clipboard.writeText(item.barcode);
@@ -174,16 +174,16 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                                     )}
                                                 </button>
                                             </td>
-                                            <td className="px-6 py-4 text-xs text-center font-bold text-slate-600">
+                                            <td className="px-3 py-1 text-xs text-center font-bold text-slate-600">
                                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 text-red-600 rounded-full border border-red-100">
                                                     <Calendar size={12} />
                                                     {item.daysInactive} Gün
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-4 text-xs text-center font-mono font-bold text-slate-500">
+                                            <td className="px-3 py-1 text-xs text-center font-mono font-bold text-slate-500">
                                                 {item.monthlySpeed.toFixed(2)}/ay
                                             </td>
-                                            <td className="px-6 py-4 text-center">
+                                            <td className="px-3 py-1 text-center">
                                                 <div className="flex items-center justify-center gap-1.5">
                                                     <input
                                                         type="number"

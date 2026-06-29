@@ -425,99 +425,88 @@ function MiniSepet({
             className="w-full pl-7 pr-3 h-8 text-[11px] bg-stone-50 border border-stone-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400 transition-all" />
         </div>
       </div>
-
-      {/* İpucu */}
-      <div className="px-3 py-2 bg-teal-50/60 border-b border-teal-100 shrink-0">
-        <p className="text-[10px] text-teal-700 font-medium leading-tight">
-          💡 <span className="font-bold">Barkod</span>'a tıkla → kopyala &nbsp;|&nbsp; <span className="font-bold">Çift tıkla</span> → {activeDepoAd} sepetine ekle
-        </p>
-      </div>
-
-      {/* Liste */}
-      <div className="flex-1 overflow-y-auto">
-        {cartItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-stone-300 px-4 text-center">
-            <ShoppingCart size={32} strokeWidth={1.5} />
-            <div>
-              <p className="text-[12px] font-semibold text-stone-400">Sepet boş</p>
-              <p className="text-[11px] text-stone-300 mt-0.5">Sipariş önerisinden ürün ekleyin</p>
-            </div>
-          </div>
-        ) : (
-          <div className="divide-y divide-stone-50">
-            {cartItems.map(([barkod, item]) => {
-              const firstName = item.ad.split(' ')[0];
-              const isCB = copied === `barkod-${barkod}`;
-              const isCA = copied === `ad-${barkod}`;
-              const res = bulkQueryResult?.[barkod];
-              return (
-                <div key={barkod} className="group px-3 py-2.5 hover:bg-stone-50/80 transition-colors">
-                  <button onClick={() => copyText(firstName, `ad-${barkod}`)}
-                    title={`"${firstName}" kopyala`}
-                    className="w-full text-left mb-1 flex items-start gap-1.5 group/ad">
-                    <span className={cn("text-[11px] font-semibold leading-tight flex-1 transition-colors",
-                      isCA ? "text-teal-600" : "text-stone-800 group-hover/ad:text-teal-700")}>
-                      {item.ad}
-                    </span>
-                    {isCA ? <Check size={10} className="text-teal-500 shrink-0 mt-0.5" />
-                      : <Copy size={9} className="text-stone-300 group-hover/ad:text-teal-400 shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-all" />}
-                  </button>
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => copyText(barkod, `barkod-${barkod}`)}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        onBarcodeDoubleClick?.(barkod);
-                      }}
-                      title="Tek tık: kopyala · Çift tık: AS Ecza'ya sipariş ver"
-                      className={cn("flex items-center gap-1 px-2 py-0.5 rounded-md border transition-all font-mono text-[10px] font-bold group/bk",
-                        isCB ? "bg-teal-50 border-teal-200 text-teal-700" : "bg-stone-50 border-stone-200 text-stone-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700")}
-                    >
-                      {isCB ? <Check size={9} className="text-teal-500" /> : <Copy size={9} className="text-stone-400 group-hover/bk:text-teal-500" />}
-                      {barkod}
-                    </button>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className="text-[10px] font-black text-stone-800 bg-stone-100 px-2 py-0.5 rounded-md">
-                        {item.qty} <span className="font-medium text-stone-400">kutu</span>
-                      </span>
-                      {item.mf > 0 && (
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">+{item.mf}</span>
-                      )}
-                    </div>
-                  </div>
-                  {res && (
-                    <div className="mt-1.5 pt-1.5 border-t border-dashed border-stone-100 flex items-center justify-between text-[10px] text-stone-500 font-medium">
-                      {res.ok ? (
-                        <>
-                          <div className="flex items-center gap-1.5">
-                            <span className={cn(
-                              "px-1 py-0.2 rounded font-bold text-[9px]",
-                              res.stok && res.stok > 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
-                            )}>
-                              Stok: {res.stok ?? 0}
-                            </span>
-                            {res.mf && (
-                              <span className="bg-amber-50 text-amber-700 font-bold px-1 py-0.2 rounded text-[9px]">
-                                MF: {res.mf}
-                              </span>
-                            )}
-                          </div>
-                          <span className="font-bold text-stone-700">
-                            {res.net ? `${res.net.toFixed(2)} TL` : res.fiyat_depocu ? `${res.fiyat_depocu.toFixed(2)} TL` : ''}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-rose-500 text-[9px]">
-                          {res.error === 'not_found' ? 'AS\'ta bulunamadı' : 'Sorgu hatası'}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+ 
+       {/* Liste */}
+       <div className="flex-1 overflow-y-auto">
+         {cartItems.length === 0 ? (
+           <div className="flex flex-col items-center justify-center h-full gap-3 text-stone-300 px-4 text-center">
+             <ShoppingCart size={32} strokeWidth={1.5} />
+             <div>
+               <p className="text-[12px] font-semibold text-stone-400">Sepet boş</p>
+               <p className="text-[11px] text-stone-300 mt-0.5">Sipariş önerisinden ürün ekleyin</p>
+             </div>
+           </div>
+         ) : (
+           <div className="divide-y divide-stone-50">
+             {cartItems.map(([barkod, item]) => {
+               const firstName = item.ad.split(' ')[0];
+               const isCB = copied === `barkod-${barkod}`;
+               const isCA = copied === `ad-${barkod}`;
+               const res = bulkQueryResult?.[barkod];
+               return (
+                 <div key={barkod} className="group px-3 py-2.5 hover:bg-stone-50/80 transition-colors">
+                   <button onClick={() => copyText(firstName, `ad-${barkod}`)}
+                     title={`"${firstName}" kopyala`}
+                     className="w-full text-left mb-1 flex items-start gap-1.5 group/ad">
+                     <span className={cn("text-[11px] font-semibold leading-tight flex-1 transition-colors",
+                       isCA ? "text-teal-600" : "text-stone-800 group-hover/ad:text-teal-700")}>
+                       {item.ad}
+                     </span>
+                     {isCA ? <Check size={10} className="text-teal-500 shrink-0 mt-0.5" />
+                       : <Copy size={9} className="text-stone-300 group-hover/ad:text-teal-400 shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-all" />}
+                   </button>
+                   <div className="flex items-center justify-between gap-2">
+                     <button
+                       onClick={() => copyText(barkod, `barkod-${barkod}`)}
+                       onDoubleClick={(e) => {
+                         e.stopPropagation();
+                         onBarcodeDoubleClick?.(barkod);
+                       }}
+                       title={`Tek tık: kopyala · Çift tık: ${activeDepoAd} sepetine ekle`}
+                       className={cn("flex items-center gap-1 px-2 py-0.5 rounded-md border transition-all font-mono text-[10px] font-bold group/bk",
+                         isCB ? "bg-teal-50 border-teal-200 text-teal-700" : "bg-stone-50 border-stone-200 text-stone-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700")}
+                     >
+                       {isCB ? <Check size={9} className="text-teal-500" /> : <Copy size={9} className="text-stone-400 group-hover/bk:text-teal-500" />}
+                       {barkod}
+                     </button>
+                     <div className="flex items-center gap-1 shrink-0">
+                       <span className="text-[10px] font-black text-stone-800 bg-stone-100 px-2 py-0.5 rounded-md">
+                         {item.qty} <span className="font-medium text-stone-400">kutu</span>
+                       </span>
+                       {item.mf > 0 && (
+                         <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">+{item.mf}</span>
+                       )}
+                     </div>
+                   </div>
+                   {res && (
+                     <div className="mt-1.5 pt-1.5 border-t border-dashed border-stone-100 flex items-center justify-between text-[10px] text-stone-500 font-medium">
+                       {res.ok ? (
+                         <>
+                           <div className="flex items-center gap-1.5">
+                             {res.mf ? (
+                               <span className="bg-amber-50 text-amber-700 font-bold px-1 py-0.2 rounded text-[9px]">
+                                 MF: {res.mf}
+                               </span>
+                             ) : (
+                               <span className="text-[9px] text-stone-400 font-medium italic">MF Yok</span>
+                             )}
+                           </div>
+                           <span className="font-bold text-stone-700">
+                             {res.net ? `${res.net.toFixed(2)} TL` : res.fiyat_depocu ? `${res.fiyat_depocu.toFixed(2)} TL` : ''}
+                           </span>
+                         </>
+                       ) : (
+                         <span className="text-rose-500 text-[9px]">
+                           {res.error === 'not_found' ? 'Bulunamadı' : 'Sorgu hatası'}
+                         </span>
+                       )}
+                     </div>
+                   )}
+                 </div>
+               );
+             })}
+           </div>
+         )}
       </div>
     </div>
   );
@@ -1279,7 +1268,7 @@ function BrowserPanel({
 
 // ── Ana Bileşen ──────────────────────────────────────────────────────────────
 
-export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs }: any) {
+export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs, pendingSearch, onSearchProcessed }: any) {
   const [depolar, setDepolar] = useState<Depo[]>(loadDepolar);
   const [showModal, setShowModal] = useState(false);
   const [editingDepo, setEditingDepo] = useState<Depo | undefined>(undefined);
@@ -2650,6 +2639,15 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           <span className="text-xs font-black tracking-tight uppercase">Depolar</span>
         </div>
 
+        {/* Ana Menüye Dönüş Butonu */}
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-[11px] font-bold text-stone-500 hover:text-stone-850 px-3 py-1.5 rounded-xl hover:bg-stone-100 transition-all shrink-0 border border-stone-200 shadow-sm"
+        >
+          <ArrowLeft size={14} />
+          Ana Menü
+        </button>
+
         <div className="w-px h-5 bg-stone-200 shrink-0" />
 
         {/* Yatay Depolar Listesi */}
@@ -2707,17 +2705,6 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             </span>
           </button>
         )}
-
-        <div className="w-px h-5 bg-stone-200 shrink-0" />
-
-        {/* Ana Menüye Dönüş Butonu */}
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-[11px] font-bold text-stone-500 hover:text-stone-800 px-3 py-1.5 rounded-xl hover:bg-stone-100 transition-all shrink-0"
-        >
-          <ArrowLeft size={14} />
-          Ana Menü
-        </button>
       </div>
 
       {/* ALT BÖLÜM */}
@@ -2745,8 +2732,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             onNavigate={handleNavigate}
             preloadPath={preloadPath}
             onIpcMessage={handleIpcMessage}
-            pendingSearch={null}
-            onSearchProcessed={() => {}}
+            pendingSearch={pendingSearch}
+            onSearchProcessed={onSearchProcessed}
             pendingOrder={pendingOrder}
             onOrderProcessed={() => setPendingOrder(null)}
             onOrderResult={handleOrderResult}

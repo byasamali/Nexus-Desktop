@@ -41,12 +41,8 @@ interface SepetPageProps {
     data?: any;
 }
 
-const getCombinedMfHistory = (barcode: string, alimStr: string, localOrders: any[]) => {
-  const history: Array<{ date: string; mf: string; source: string; qty: number }> = [];
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-  // 1. Parse warehouse purchase history (v95)
+const getPurchaseHistory = (alimStr: string) => {
+  const purchases: Array<{ date: string; depo: string; mf: string; qty: number }> = [];
   if (alimStr && alimStr !== 'AL_YOK' && alimStr !== 'ALIM_YOK' && alimStr !== 'YOK') {
     alimStr.split('|').forEach(entry => {
       const parts = entry.split(':');
@@ -54,43 +50,67 @@ const getCombinedMfHistory = (barcode: string, alimStr: string, localOrders: any
         const dateStr = parts[0];
         const val = parts[1];
         if (val.includes('+')) {
-          const entryDate = new Date(dateStr);
-          if (entryDate >= sixMonthsAgo) {
-            history.push({
-              date: dateStr,
-              mf: val,
-              source: 'Depo Alımı',
-              qty: parseInt(val.split('+')[0]) || 0
-            });
+          let mfVal = val;
+          let depoName = 'Bilinmeyen Depo';
+          if (val.includes('@')) {
+            const valParts = val.split('@');
+            mfVal = valParts[0];
+            depoName = valParts[1];
           }
+          purchases.push({
+            date: dateStr,
+            depo: depoName,
+            mf: mfVal,
+            qty: parseInt(mfVal.split('+')[0]) || 0
+          });
         }
       }
     });
   }
+  return purchases
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5);
+};
 
-  // 2. Local order history
+const getQueryHistory = (barcode: string, localOrders: any[]) => {
+  const groupedQueries: Record<string, { date: string; depo: string; barems: Set<string> }> = {};
   if (Array.isArray(localOrders)) {
     localOrders.forEach(order => {
-      if (order.barkod === barcode && order.durum === 'success') {
-        const entryDate = new Date(order.tarih);
-        if (entryDate >= sixMonthsAgo) {
-          const mfs = [order.mf1, order.mf2, order.mf3].filter(Boolean).join(', ');
-          if (mfs) {
-            const dateStr = entryDate.toISOString().split('T')[0];
-            history.push({
+      if (order.barkod === barcode) {
+        const dateStr = order.tarih ? (order.tarih.includes('T') ? order.tarih.split('T')[0] : order.tarih) : '';
+        if (!dateStr) return;
+        const depo = order.depo || 'Bilinmeyen Depo';
+        const key = `${dateStr}_${depo}`;
+        
+        const baremsInOrder = [order.mf1, order.mf2, order.mf3]
+          .filter(Boolean)
+          .map(b => b.trim())
+          .filter(b => {
+            if (!b.includes('+')) return false;
+            const free = parseInt(b.split('+')[1]) || 0;
+            return free > 0;
+          });
+        if (baremsInOrder.length > 0) {
+          if (!groupedQueries[key]) {
+            groupedQueries[key] = {
               date: dateStr,
-              mf: mfs,
-              source: 'AS Ecza (Sipariş)',
-              qty: order.miktar || 0
-            });
+              depo: depo,
+              barems: new Set<string>()
+            };
           }
+          baremsInOrder.forEach(b => groupedQueries[key].barems.add(b));
         }
       }
     });
   }
-
-  // Sort by date descending
-  return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return Object.values(groupedQueries)
+    .map(q => ({
+      date: q.date,
+      depo: q.depo,
+      baremsStr: Array.from(q.barems).join(', ')
+    }))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5);
 };
 
 export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders, data }: SepetPageProps) {
@@ -122,7 +142,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
     }, [data]);
 
     // Derive items directly from cart prop
-    const items = Object.entries(cart)
+    const items: CartItem[] = Object.entries(cart)
         .filter(([_, val]: any) => val.inCart && val.qty > 0)
         .map(([id, val]: any) => {
             const extra = productMap[id] || {};
@@ -372,37 +392,22 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                     </div>
                                 </div>
 
-                                {/* ARAMA */}
-                                <div className="relative max-w-md">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={18} />
-                                    <input
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={e => setSearchQuery(e.target.value)}
-                                        placeholder="Ürün adı veya barkod ara..."
-                                        className="w-full pl-10 pr-10 py-2.5 border border-stone-200 rounded-lg text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all"
-                                    />
-                                    {searchQuery && (
-                                        <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
-                                            <X size={16} />
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* BUTONLAR */}
-                                <div className="flex flex-col md:flex-row gap-2 w-full md:w-auto">
+                                {/* YETKİLİ KONTROLLERİ */}
+                                <div className="flex flex-wrap items-center gap-2 w-full">
                                     <button
                                         onClick={() => setShowImportModal(true)}
-                                        className="flex items-center justify-center md:justify-start gap-2 px-3 md:px-4 py-2 md:py-2.5 border border-stone-200 rounded-lg hover:bg-stone-50 font-semibold text-xs md:text-sm text-stone-700 transition-all"
+                                        className="flex items-center justify-center gap-2 px-3 py-2 border border-stone-200 rounded-lg hover:bg-stone-50 font-semibold text-xs text-stone-700 transition-all shrink-0"
                                     >
                                         <Upload size={14} /> <span className="hidden sm:inline">Metin Aktar</span><span className="sm:hidden">Metin</span>
                                     </button>
+                                    
                                     <button
                                         onClick={() => fileInputRef.current?.click()}
-                                        className="flex items-center justify-center md:justify-start gap-2 px-3 md:px-4 py-2 md:py-2.5 border border-stone-200 rounded-lg hover:bg-stone-50 font-semibold text-xs md:text-sm text-stone-700 transition-all"
+                                        className="flex items-center justify-center gap-2 px-3 py-2 border border-stone-200 rounded-lg hover:bg-stone-50 font-semibold text-xs text-stone-700 transition-all shrink-0"
                                     >
                                         <FileUp size={14} /> <span className="hidden sm:inline">Excel Aktar</span><span className="sm:hidden">Excel</span>
                                     </button>
+                                    
                                     <input
                                         ref={fileInputRef}
                                         type="file"
@@ -410,29 +415,46 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                         onChange={importFromExcel}
                                         className="hidden"
                                     />
+
+                                    {/* ARAMA (Excel Aktar ile Excel Butonu Arasında) */}
+                                    <div className="relative flex-1 min-w-[200px] max-w-xs">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={16} />
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={e => setSearchQuery(e.target.value)}
+                                            placeholder="Ara..."
+                                            className="w-full pl-9 pr-8 py-1.5 border border-stone-200 rounded-lg text-xs outline-none focus:border-teal-500 transition-all"
+                                        />
+                                        {searchQuery && (
+                                            <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
+                                                <X size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+
                                     {selectedItems.size > 0 && (
                                         <button
                                             onClick={deleteSelected}
-                                            className="flex items-center justify-center md:justify-start gap-2 px-3 md:px-4 py-2 md:py-2.5 border border-red-200 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-semibold text-xs md:text-sm transition-all"
+                                            className="flex items-center justify-center gap-2 px-3 py-2 border border-red-200 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-semibold text-xs transition-all shrink-0"
                                         >
-                                            <Trash2 size={14} /> <span className="hidden sm:inline">Sil ({selectedItems.size})</span><span className="sm:hidden">Sil</span>
+                                            <Trash2 size={14} /> <span>Sil ({selectedItems.size})</span>
                                         </button>
                                     )}
-                                    <div className="ml-auto flex gap-2 w-full md:w-auto">
 
-                                        <button
-                                            onClick={downloadXlsx}
-                                            className="flex-1 md:flex-none flex items-center justify-center md:justify-start gap-2 px-3 md:px-4 py-2 md:py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-semibold text-xs md:text-sm transition-all"
-                                        >
-                                            <Download size={14} /> <span className="hidden sm:inline">Excel</span>
-                                        </button>
-                                        <button
-                                            onClick={sendWhatsApp}
-                                            className="flex-1 md:flex-none flex items-center justify-center md:justify-start gap-2 px-3 md:px-4 py-2 md:py-2.5 bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe5d] font-semibold text-xs md:text-sm transition-all"
-                                        >
-                                            <WhatsAppIcon /> <span className="hidden sm:inline">WhatsApp</span>
-                                        </button>
-                                    </div>
+                                    <button
+                                        onClick={downloadXlsx}
+                                        className="flex items-center justify-center gap-2 px-3 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-semibold text-xs transition-all shrink-0"
+                                    >
+                                        <Download size={14} /> <span>Excel</span>
+                                    </button>
+
+                                    <button
+                                        onClick={sendWhatsApp}
+                                        className="flex items-center justify-center gap-2 px-3 py-2 bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe5d] font-semibold text-xs transition-all shrink-0"
+                                    >
+                                        <WhatsAppIcon /> <span className="hidden sm:inline">WhatsApp</span>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -460,16 +482,43 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                 <tbody>
                                     {filteredItems.flatMap((item) => {
                                         const isExpanded = expandedBarkod === item.barkod;
-                                        const mfHistory = getCombinedMfHistory(item.barkod, item.v95, localOrders);
-                                        const rawBaremler = Array.isArray(item.mf_baremleri) ? item.mf_baremleri : [];
-                                        const seen = new Set<string>();
-                                        const baremler = rawBaremler.filter((b: any) => {
-                                            if (!b || b.mf === 0 || b.ana === 0) return false;
-                                            const key = `${b.ana}+${b.mf}`;
-                                            if (seen.has(key)) return false;
-                                            seen.add(key);
-                                            return true;
-                                        });
+                                        const purchases = getPurchaseHistory(item.v95);
+                                        const queries = getQueryHistory(item.barkod, localOrders);
+                                        
+                                        // GÜNCEL SORGU MF'LERİ: Her depo için en son sorgunun MF baremleri
+                                        const queryBarems: { ana: number; mf: number }[] = [];
+                                        const seenBarem = new Set<string>();
+                                        if (Array.isArray(localOrders)) {
+                                            const warehouseLatestOrders: Record<string, any> = {};
+                                            localOrders
+                                                .filter(o => o.barkod === item.barkod)
+                                                .forEach(order => {
+                                                    const depo = order.depo || 'Bilinmeyen';
+                                                    const existing = warehouseLatestOrders[depo];
+                                                    if (!existing || new Date(order.tarih || 0).getTime() > new Date(existing.tarih || 0).getTime()) {
+                                                        warehouseLatestOrders[depo] = order;
+                                                    }
+                                                });
+                                            
+                                            Object.values(warehouseLatestOrders).forEach((order: any) => {
+                                                [order.mf1, order.mf2, order.mf3].forEach(val => {
+                                                    if (!val) return;
+                                                    const clean = val.trim();
+                                                    if (!clean.includes('+')) return;
+                                                    const [anaStr, mfStr] = clean.split('+');
+                                                    const ana = parseInt(anaStr) || 0;
+                                                    const mf = parseInt(mfStr) || 0;
+                                                    if (ana > 0 && mf > 0) {
+                                                        const key = `${ana}+${mf}`;
+                                                        if (!seenBarem.has(key)) {
+                                                            seenBarem.add(key);
+                                                            queryBarems.push({ ana, mf });
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                        }
+                                        const baremler = queryBarems.sort((a, b) => a.ana - b.ana);
                                         return [
                                             <tr key={item.barkod} className={`border-b border-stone-100 hover:bg-stone-50/50 transition-colors group ${isExpanded ? 'bg-stone-50' : ''}`}>
                                                 <td className="px-2 md:px-4 py-2 md:py-3">
@@ -487,7 +536,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                     <div className="flex items-center flex-wrap gap-2">
                                                         <span>{item.ad}</span>
                                                         <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
-                                                            MF ({mfHistory.length})
+                                                            Geçmiş ({purchases.length} Alım · {queries.length} Sorgu)
                                                         </span>
                                                         {baremler.length > 0 && (
                                                             <div className="flex flex-wrap gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
@@ -543,42 +592,76 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                 </td>
                                             </tr>,
                                             isExpanded && (
-                                                <tr key={`${item.barkod}-expanded`} className="bg-stone-50/50">
-                                                    <td colSpan={6} className="px-4 py-3 border-b border-stone-100">
-                                                        <div className="pl-8 pr-4 py-2 max-w-xl">
-                                                            <h4 className="text-[11px] font-black text-stone-500 uppercase tracking-wider mb-2">📦 {item.ad} — Son 6 Aylık MF Geçmişi</h4>
-                                                            {mfHistory.length === 0 ? (
-                                                                <p className="text-stone-400 text-xs italic">Son 6 aya ait MF alım/sipariş geçmişi bulunamadı.</p>
-                                                            ) : (
-                                                                <div className="border border-stone-200 rounded-lg overflow-hidden bg-white shadow-inner">
-                                                                    <table className="w-full text-left text-xs border-collapse">
-                                                                        <thead className="bg-stone-100 text-stone-600 border-b border-stone-200">
-                                                                            <tr>
-                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px]">Tarih</th>
-                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px]">Kaynak</th>
-                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px]">MF Baremi</th>
-                                                                                <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-[9px] text-right">Miktar</th>
-                                                                            </tr>
-                                                                        </thead>
-                                                                        <tbody className="divide-y divide-stone-100 text-stone-700 font-medium">
-                                                                            {mfHistory.map((h, hi) => (
-                                                                                <tr key={hi} className="hover:bg-stone-50/40">
-                                                                                    <td className="px-3 py-1.5 font-mono">{h.date.split('-').reverse().join('.')}</td>
-                                                                                    <td className="px-3 py-1.5">
-                                                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                                                                            h.source.includes('Sipariş') ? 'bg-teal-50 text-teal-600' : 'bg-blue-50 text-blue-600'
-                                                                                        }`}>
-                                                                                            {h.source}
-                                                                                        </span>
-                                                                                    </td>
-                                                                                    <td className="px-3 py-1.5 font-bold text-emerald-600">{h.mf}</td>
-                                                                                    <td className="px-3 py-1.5 text-right font-mono">{h.qty}</td>
-                                                                                </tr>
-                                                                            ))}
-                                                                        </tbody>
-                                                                    </table>
+                                                <tr key={`${item.barkod}-expanded`} className="bg-stone-50/50 animate-fadeIn">
+                                                    <td colSpan={6} className="px-4 py-4 border-b border-stone-100">
+                                                        <div className="pl-8 pr-4 py-1 w-full">
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                                {/* Sol Kolon: Fatura Alımları */}
+                                                                <div className="space-y-2">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <span className="w-1.5 h-3 rounded bg-blue-500"></span>
+                                                                        <h4 className="text-[10px] font-black text-stone-500 uppercase tracking-widest">🚚 Son 5 Depo Alımı (Fatura)</h4>
+                                                                    </div>
+                                                                    {purchases.length === 0 ? (
+                                                                        <p className="text-stone-400 text-xs italic bg-white p-3 rounded-xl border border-stone-100 shadow-sm">Depo alım geçmişi bulunamadı.</p>
+                                                                    ) : (
+                                                                        <div className="border border-stone-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                                                                            <table className="w-full text-left text-xs border-collapse">
+                                                                                <thead className="bg-stone-50 text-stone-500 border-b border-stone-100">
+                                                                                    <tr>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px]">Tarih</th>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px]">Depo</th>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px] text-center">MF</th>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px] text-right">Miktar</th>
+                                                                                    </tr>
+                                                                                </thead>
+                                                                                <tbody className="divide-y divide-stone-100 text-stone-700 font-medium">
+                                                                                    {purchases.map((h, hi) => (
+                                                                                        <tr key={hi} className="hover:bg-stone-50/30 transition-colors">
+                                                                                            <td className="px-3 py-2 font-mono text-stone-500">{h.date.split('-').reverse().join('.')}</td>
+                                                                                            <td className="px-3 py-2 truncate max-w-[120px] font-semibold text-stone-700" title={h.depo}>{h.depo}</td>
+                                                                                            <td className="px-3 py-2 text-center font-black text-emerald-600">{h.mf}</td>
+                                                                                            <td className="px-3 py-2 text-right font-mono text-stone-600">{h.qty}</td>
+                                                                                        </tr>
+                                                                                    ))}
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    )}
                                                                 </div>
-                                                            )}
+
+                                                                {/* Sağ Kolon: Canlı Sorgu MF'leri */}
+                                                                <div className="space-y-2">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <span className="w-1.5 h-3 rounded bg-amber-500"></span>
+                                                                        <h4 className="text-[10px] font-black text-stone-500 uppercase tracking-widest">🔍 Depo Sorgulamalarında En Son MF'ler</h4>
+                                                                    </div>
+                                                                    {queries.length === 0 ? (
+                                                                        <p className="text-stone-400 text-xs italic bg-white p-3 rounded-xl border border-stone-100 shadow-sm">Sorgu MF geçmişi bulunamadı.</p>
+                                                                    ) : (
+                                                                        <div className="border border-stone-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                                                                            <table className="w-full text-left text-xs border-collapse">
+                                                                                <thead className="bg-stone-50 text-stone-500 border-b border-stone-100">
+                                                                                    <tr>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px]">Tarih</th>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px]">Depo</th>
+                                                                                        <th className="px-3 py-2 font-bold uppercase tracking-wider text-[9px] text-right">Bulunan MF'ler</th>
+                                                                                    </tr>
+                                                                                </thead>
+                                                                                <tbody className="divide-y divide-stone-100 text-stone-700 font-medium">
+                                                                                    {queries.map((q, qi) => (
+                                                                                        <tr key={qi} className="hover:bg-stone-50/30 transition-colors">
+                                                                                            <td className="px-3 py-2 font-mono text-stone-500">{q.date.split('-').reverse().join('.')}</td>
+                                                                                            <td className="px-3 py-2 font-bold text-stone-600">{q.depo}</td>
+                                                                                            <td className="px-3 py-2 text-right font-black text-emerald-600">{q.baremsStr}</td>
+                                                                                        </tr>
+                                                                                    ))}
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         </div>
                                                     </td>
                                                 </tr>

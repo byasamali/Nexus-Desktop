@@ -44,7 +44,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
     const [search, setSearch] = useState("");
     const [cacheData, setCacheData] = useState<Record<string, any>>({});
     const [loading, setLoading] = useState(true);
-    const [subTab, setSubTab] = useState<'flagged' | 'non_pharma'>('flagged');
+    const [onlyShowDiff, setOnlyShowDiff] = useState(false);
 
     // Canlı sorgu state'leri
     const [queryWarehouse, setQueryWarehouse] = useState<'as' | 'gek' | 'alliance'>('as');
@@ -164,59 +164,9 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
         loadCache();
     }, [gln, data]);
 
-    const flaggedList = useMemo(() => {
-        if (!data || !data.gruplar) return [];
-        const items: any[] = [];
-
-        data.gruplar.forEach((group: any) => {
-            if (!group.detaylar) return;
-            group.detaylar.forEach((urun: any) => {
-                const barcode = urun.v1;
-                const categoryId = urun.kategori_id;
-                
-                // Kural 1: İlaç kategorisinde olmayacak (İDU veya İBR)
-                const isPharma = isPharmaceuticalCategory(categoryId);
-                if (isPharma) return;
-
-                // Kural 2: Depo sorgusu önbelleğinde olacak
-                const cached = cacheData[barcode];
-                if (!cached) return;
-
-                const localPsf = parsePrice(urun.v3 || urun.v87 || 0);
-                const depoPsf = parsePrice(cached.fiyat_etiket || 0);
-
-                // Kural 3: depo psf > lokal psf olacak
-                if (depoPsf > localPsf && localPsf > 0) {
-                    const diff = depoPsf - localPsf;
-                    const diffPercent = (diff / localPsf) * 100;
-                    const stock = Number(urun.v4) || 0;
-                    const potentialLoss = diff * stock;
-
-                    items.push({
-                        barkod: barcode,
-                        ad: urun.v2 || 'Bilinmeyen Ürün',
-                        kategori_id: categoryId,
-                        kategori_ad: categoryMap[categoryId]?.isim || 'Diğer / İlaç Dışı',
-                        localPsf,
-                        depoPsf,
-                        diff,
-                        diffPercent,
-                        stock,
-                        potentialLoss,
-                        depo: cached.depo || 'AS ECZA',
-                        date: cached.date ? cached.date.split('T')[0] : 'Bilinmeyen'
-                    });
-                }
-            });
-        });
-
-        // Fark miktarına göre azalan sırala
-        return items.sort((a, b) => b.diff - a.diff);
-    }, [data, cacheData]);
-
     const nonPharmaList = useMemo(() => {
         if (!data || !data.gruplar) return [];
-        const items: NonPharmaItem[] = [];
+        const items: any[] = [];
 
         data.gruplar.forEach((group: any) => {
             if (!group.detaylar) return;
@@ -234,47 +184,71 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                 const localPsf = parsePrice(urun.v3 || urun.v87 || 0);
                 const stock = Number(urun.v4) || 0;
 
+                const cached = cacheData[barcode];
+                const depoPsf = cached ? parsePrice(cached.fiyat_etiket || 0) : 0;
+                
+                let diff = 0;
+                let diffPercent = 0;
+                let potentialLoss = 0;
+                let hasPriceDifference = false;
+
+                if (depoPsf > localPsf && localPsf > 0) {
+                    diff = depoPsf - localPsf;
+                    diffPercent = (diff / localPsf) * 100;
+                    potentialLoss = diff * stock;
+                    hasPriceDifference = true;
+                }
+
                 items.push({
                     barkod: barcode,
                     ad: urun.v2 || 'Bilinmeyen Ürün',
                     kategori_id: categoryId,
                     kategori_ad: categoryMap[categoryId]?.isim || 'Diğer / İlaç Dışı',
                     localPsf,
-                    stock,
-                    daysInactive
+                    depoPsf,
+                    diff,
+                    diffPercent,
+                    potentialLoss,
+                    hasPriceDifference,
+                    depo: cached?.depo || 'AS ECZA',
+                    date: cached?.date ? cached.date.split('T')[0] : null,
+                    daysInactive,
+                    stock
                 });
             });
         });
 
-        return items.sort((a, b) => a.ad.localeCompare(b.ad, 'tr'));
-    }, [data]);
-
-    const filteredFlaggedData = useMemo(() => {
-        return flaggedList.filter(item =>
-            item.ad.toLowerCase().includes(search.toLowerCase()) ||
-            item.barkod.includes(search) ||
-            item.kategori_ad.toLowerCase().includes(search.toLowerCase())
-        );
-    }, [flaggedList, search]);
+        // Fiyat farkı olanları öncelikli gösterip sonra isme göre sırala
+        return items.sort((a, b) => {
+            if (a.hasPriceDifference && !b.hasPriceDifference) return -1;
+            if (!a.hasPriceDifference && b.hasPriceDifference) return 1;
+            return b.diff - a.diff || a.ad.localeCompare(b.ad, 'tr');
+        });
+    }, [data, cacheData]);
 
     const filteredNonPharmaData = useMemo(() => {
-        return nonPharmaList.filter(item =>
+        let list = nonPharmaList;
+        if (onlyShowDiff) {
+            list = list.filter(item => item.hasPriceDifference);
+        }
+        return list.filter(item =>
             item.ad.toLowerCase().includes(search.toLowerCase()) ||
             item.barkod.includes(search) ||
             item.kategori_ad.toLowerCase().includes(search.toLowerCase())
         );
-    }, [nonPharmaList, search]);
+    }, [nonPharmaList, onlyShowDiff, search]);
 
     const stats = useMemo(() => {
-        if (flaggedList.length === 0) return { totalLoss: 0, avgDiffPercent: 0, count: 0 };
-        const totalLoss = flaggedList.reduce((sum, item) => sum + (item.potentialLoss > 0 ? item.potentialLoss : 0), 0);
-        const avgDiffPercent = flaggedList.reduce((sum, item) => sum + item.diffPercent, 0) / flaggedList.length;
+        const flagged = nonPharmaList.filter(item => item.hasPriceDifference);
+        if (flagged.length === 0) return { totalLoss: 0, avgDiffPercent: 0, count: 0 };
+        const totalLoss = flagged.reduce((sum, item) => sum + (item.potentialLoss > 0 ? item.potentialLoss : 0), 0);
+        const avgDiffPercent = flagged.reduce((sum, item) => sum + item.diffPercent, 0) / flagged.length;
         return {
             totalLoss,
             avgDiffPercent,
-            count: flaggedList.length
+            count: flagged.length
         };
-    }, [flaggedList]);
+    }, [nonPharmaList]);
 
     // Seçim fonksiyonları
     const handleSelectRow = (barcode: string) => {
@@ -303,7 +277,14 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
     };
 
     const handleQuerySelected = async () => {
-        if (selectedBarcodes.size === 0) return;
+        const barcodesArray = selectedBarcodes.size > 0 
+            ? Array.from(selectedBarcodes)
+            : filteredNonPharmaData.map(item => item.barkod);
+
+        if (barcodesArray.length === 0) {
+            alert("Sorgulanacak ürün bulunamadı. Lütfen listede ürün olduğundan emin olun.");
+            return;
+        }
         
         let hiddenWebview: any = null;
         const targetDomain = queryWarehouse === 'gek' ? 'gek.org.tr' : queryWarehouse === 'alliance' ? 'alliance' : 'asecza.com.tr';
@@ -332,14 +313,12 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
             return;
         }
 
-        // GEK webview hâlâ irj/portal/'daysa FrameWorkT1'e navigate et
-        // (API istekleri Referer: FrameWorkT1/'dan gelmesi gerekiyor)
+        // GEK webview irj/portal/'daysa FrameWorkT1'e navigate et
         if (queryWarehouse === 'gek') {
             try {
                 const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
                 if (currentUrl.includes('irj/portal') && !currentUrl.includes('FrameWorkT1')) {
                     hiddenWebview.loadURL('https://esube.gek.org.tr/FrameWorkT1/');
-                    // Sayfanın yüklenmesini bekle
                     await new Promise<void>((resolve) => {
                         const timeout = setTimeout(() => resolve(), 8000);
                         const checkReady = setInterval(async () => {
@@ -348,7 +327,6 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                                 if (url.includes('FrameWorkT1')) {
                                     clearInterval(checkReady);
                                     clearTimeout(timeout);
-                                    // Biraz daha bekle (sayfa tamamen yüklensin)
                                     setTimeout(() => resolve(), 2000);
                                 }
                             } catch {}
@@ -360,7 +338,6 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
 
         setIsQuerying(true);
         queryCancelRequested.current = false;
-        const barcodesArray = Array.from(selectedBarcodes);
         const total = barcodesArray.length;
 
         // Önbelleği yükle
@@ -1179,32 +1156,6 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                 </div>
             </div>
 
-            {/* TAB SEÇİM BARBARI */}
-            <div className="flex gap-2 border-b border-slate-100 pb-px">
-                <button
-                    onClick={() => { setSubTab('flagged'); setSelectedBarcodes(new Set()); }}
-                    className={cn(
-                        "pb-3 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all duration-200 outline-none",
-                        subTab === 'flagged'
-                            ? "border-amber-500 text-slate-800"
-                            : "border-transparent text-slate-400 hover:text-slate-600"
-                    )}
-                >
-                    Fiyat Farkı Olanlar ({flaggedList.length})
-                </button>
-                <button
-                    onClick={() => { setSubTab('non_pharma'); setSelectedBarcodes(new Set()); }}
-                    className={cn(
-                        "pb-3 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all duration-200 outline-none",
-                        subTab === 'non_pharma'
-                            ? "border-amber-500 text-slate-800"
-                            : "border-transparent text-slate-400 hover:text-slate-600"
-                    )}
-                >
-                    İlaç Dışı Ürünlerim ({nonPharmaList.length})
-                </button>
-            </div>
-
             {/* FİLTRE VE BAŞLIK BANTLARI */}
             <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-stone-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
                 <div className="flex items-center gap-5">
@@ -1213,24 +1164,33 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                     </div>
                     <div>
                         <h2 className="text-2xl font-black text-slate-800 tracking-tight">
-                            {subTab === 'flagged' ? 'Fiyat Farkı Tespit Edilenler' : 'İlaç Dışı Ürünler (Son 6 Ay Hareketli)'}
+                            İlaç Dışı Ürünler & Fiyat Farkı Kontrolü
                         </h2>
                         <p className="text-slate-500 font-medium">
-                            {subTab === 'flagged' 
-                                ? 'Depo etiket fiyatı, lokal etiket fiyatınızdan daha yüksek olan ilaç dışı ürünler.'
-                                : 'Son 6 ay içerisinde satış hareketi görmüş olan tüm ilaç dışı ürünleriniz.'}
+                            Etiket fiyat farklarını karşılaştırın ve güncelleyin.
                         </p>
                     </div>
                 </div>
-                <div className="relative w-full md:w-80">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                    <input
-                        type="text"
-                        placeholder="Ürün veya kategori ara..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-amber-200 outline-none font-medium text-sm transition-all"
-                    />
+                <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:w-auto">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 px-4 py-3 rounded-2xl hover:bg-slate-100 transition-colors">
+                        <input
+                            type="checkbox"
+                            checked={onlyShowDiff}
+                            onChange={(e) => setOnlyShowDiff(e.target.checked)}
+                            className="w-4 h-4 accent-amber-600 rounded cursor-pointer"
+                        />
+                        Sadece Fiyat Farkı Olanlar ({stats.count})
+                    </label>
+                    <div className="relative w-full md:w-80">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input
+                            type="text"
+                            placeholder="Ürün veya kategori ara..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-amber-200 outline-none font-medium text-sm transition-all"
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -1253,204 +1213,142 @@ export default function PsfKontrolPage({ data, gln, webviewRefs }: PsfKontrolPro
                 </div>
             )}
 
-            {/* SEÇİLENLERİ SORGULA PANELİ */}
-            {subTab === 'non_pharma' && selectedBarcodes.size > 0 && (
-                <div className="bg-slate-50 border border-slate-100 p-4 rounded-[2rem] flex flex-col sm:flex-row items-center justify-between gap-4 animate-[fadeIn_0.2s_ease-out]">
-                    <div className="flex items-center gap-4">
-                        <span className="text-sm font-bold text-slate-700">Seçilen Ürün Sayısı: <span className="text-amber-600 font-black">{selectedBarcodes.size}</span></span>
-                        <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-stone-200">
-                            <span className="text-xs text-stone-500 font-bold">Depo Seçimi:</span>
-                            <select
-                                disabled={isQuerying}
-                                value={queryWarehouse}
-                                onChange={(e) => setQueryWarehouse(e.target.value as 'as' | 'gek' | 'alliance')}
-                                className="text-xs font-black text-slate-700 outline-none cursor-pointer bg-transparent"
-                            >
-                                <option value="as">AS Ecza</option>
-                                <option value="gek">Güney Ecza (GEK)</option>
-                                <option value="alliance">Alliance Healthcare</option>
-                            </select>
-                        </div>
-                    </div>
-                    <button
-                        disabled={isQuerying}
-                        onClick={handleQuerySelected}
-                        className={cn(
-                            "px-5 py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl text-sm transition-all shadow-md flex items-center gap-2",
-                            isQuerying ? "opacity-55 cursor-not-allowed" : ""
+            {/* DEPO CANLI SORGU PANELİ */}
+            <div className="bg-slate-50 border border-slate-100 p-4 rounded-[2rem] flex flex-col sm:flex-row items-center justify-between gap-4 animate-[fadeIn_0.2s_ease-out]">
+                <div className="flex items-center gap-4">
+                    <span className="text-sm font-bold text-slate-700">
+                        {selectedBarcodes.size > 0 ? (
+                            <>Seçilen Ürün Sayısı: <span className="text-amber-600 font-black">{selectedBarcodes.size}</span></>
+                        ) : (
+                            <>Tüm Liste Sorgulanacak: <span className="text-amber-600 font-black">{filteredNonPharmaData.length} ürün</span></>
                         )}
-                    >
-                        <Play size={15} /> Seçilenleri {queryWarehouse === 'as' ? "AS Ecza'dan" : queryWarehouse === 'alliance' ? "Alliance Healthcare'den" : "GEK'ten"} Sorgula
-                    </button>
+                    </span>
+                    <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-stone-200">
+                        <span className="text-xs text-stone-500 font-bold">Depo Seçimi:</span>
+                        <select
+                            disabled={isQuerying}
+                            value={queryWarehouse}
+                            onChange={(e) => setQueryWarehouse(e.target.value as 'as' | 'gek' | 'alliance')}
+                            className="text-xs font-black text-slate-700 outline-none cursor-pointer bg-transparent"
+                        >
+                            <option value="as">AS Ecza</option>
+                            <option value="gek">Güney Ecza (GEK)</option>
+                            <option value="alliance">Alliance Healthcare</option>
+                        </select>
+                    </div>
                 </div>
-            )}
+                <button
+                    disabled={isQuerying}
+                    onClick={handleQuerySelected}
+                    className={cn(
+                        "px-5 py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl text-sm transition-all shadow-md flex items-center gap-2",
+                        isQuerying ? "opacity-55 cursor-not-allowed" : ""
+                    )}
+                >
+                    <Play size={15} /> {selectedBarcodes.size > 0 ? "Seçilenleri" : "Tüm Listeyi"} {queryWarehouse === 'as' ? "AS Ecza'dan" : queryWarehouse === 'alliance' ? "Alliance Healthcare'den" : "GEK'ten"} Sorgula
+                </button>
+            </div>
 
             {/* TABLO BÖLÜMÜ */}
             <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
-                    {subTab === 'flagged' ? (
-                        filteredFlaggedData.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-20">
-                                <div className="p-4 bg-emerald-50 text-emerald-500 rounded-full mb-4">
-                                    <Check size={36} />
-                                </div>
-                                <h3 className="text-lg font-bold text-slate-800">Fiyat Farkı Bulunmuyor</h3>
-                                <p className="text-slate-500 font-medium mt-1 text-center max-w-sm">
-                                    Arama filtresine uygun veya güncellenecek herhangi bir etiket fiyatı farkı bulunmuyor.
-                                </p>
+                    {filteredNonPharmaData.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-20">
+                            <div className="p-4 bg-amber-50 text-amber-500 rounded-full mb-4">
+                                <AlertCircle size={36} />
                             </div>
-                        ) : (
-                            <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-50/50 border-b border-slate-100">
-                                    <tr>
-                                        <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Kategori</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">Stok</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Lokal PSF</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Depo PSF</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Fark (%)</th>
-                                        <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Potansiyel Kayıp</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-50">
-                                    {filteredFlaggedData.map((item, idx) => (
+                            <h3 className="text-lg font-bold text-slate-800">Ürün Bulunamadı</h3>
+                            <p className="text-slate-500 font-medium mt-1 text-center max-w-sm">
+                                Arama filtresine uygun veya güncellenecek herhangi bir etiket fiyatı farkı bulunmuyor.
+                            </p>
+                        </div>
+                    ) : (
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-slate-50/50 border-b border-slate-100">
+                                <tr>
+                                    <th className="px-3 py-1.5 w-12">
+                                        <input
+                                            type="checkbox"
+                                            disabled={isQuerying}
+                                            checked={filteredNonPharmaData.length > 0 && filteredNonPharmaData.every(item => selectedBarcodes.has(item.barkod))}
+                                            onChange={() => handleSelectAll(filteredNonPharmaData)}
+                                            className="w-4 h-4 accent-amber-600 cursor-pointer rounded border-stone-300"
+                                        />
+                                    </th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Kategori</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">Stok</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">Son Hareket</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Lokal PSF</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Depo PSF</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Fark Durumu</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {filteredNonPharmaData.map((item, idx) => {
+                                    return (
                                         <tr key={idx} className="hover:bg-slate-50/20 transition-colors group">
-                                            <td className="px-8 py-5">
+                                            <td className="px-3 py-1">
+                                                <input
+                                                    type="checkbox"
+                                                    disabled={isQuerying}
+                                                    checked={selectedBarcodes.has(item.barkod)}
+                                                    onChange={() => handleSelectRow(item.barkod)}
+                                                    className="w-4 h-4 accent-amber-600 cursor-pointer rounded border-stone-300"
+                                                />
+                                            </td>
+                                            <td className="px-3 py-1">
                                                 <div>
                                                     <div className="font-bold text-slate-700">{item.ad}</div>
                                                     <div className="text-[10px] font-mono text-slate-400 mt-0.5">{item.barkod}</div>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-5">
+                                            <td className="px-3 py-1">
                                                 <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">
                                                     {item.kategori_ad}
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-5 text-center">
+                                            <td className="px-3 py-1 text-center">
                                                 <span className={`font-bold ${item.stock === 0 ? 'text-slate-300' : 'text-slate-600'}`}>
                                                     {item.stock}
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-5 text-right font-semibold text-slate-600">
+                                            <td className="px-3 py-1 text-center text-xs font-bold text-slate-600">
+                                                {item.daysInactive === 0 ? 'Bugün' : `${item.daysInactive} gün önce`}
+                                            </td>
+                                            <td className="px-3 py-1 text-right font-semibold text-slate-600">
                                                 {item.localPsf.toFixed(2)} ₺
                                             </td>
-                                            <td className="px-6 py-5 text-right font-semibold text-slate-800">
-                                                {item.depoPsf.toFixed(2)} ₺
-                                                <div className="text-[9px] text-slate-400 font-medium mt-0.5">{item.depo} ({item.date})</div>
+                                            <td className="px-3 py-1 text-right font-semibold text-slate-800">
+                                                {item.depoPsf > 0 ? (
+                                                    <>
+                                                        {item.depoPsf.toFixed(2)} ₺
+                                                        <div className="text-[9px] text-slate-400 font-medium mt-0.5">{item.depo} ({item.date})</div>
+                                                    </>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs italic">Sorgulanmamış</span>
+                                                )}
                                             </td>
-                                            <td className="px-6 py-5 text-right">
-                                                <span className="inline-flex items-center gap-0.5 font-bold text-red-500">
-                                                    +{item.diff.toFixed(2)} ₺ (+{item.diffPercent.toFixed(0)}%)
-                                                </span>
-                                            </td>
-                                            <td className="px-8 py-5 text-right font-black text-slate-700">
-                                                {item.potentialLoss > 0 ? `${item.potentialLoss.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺` : '-'}
+                                            <td className="px-3 py-1 text-right">
+                                                {item.depoPsf > 0 ? (
+                                                    item.hasPriceDifference ? (
+                                                        <span className="inline-flex items-center gap-0.5 font-bold text-red-500">
+                                                            +{item.diff.toFixed(2)} ₺ (+{item.diffPercent.toFixed(0)}%)
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-0.5 font-bold text-emerald-500">
+                                                            Uyumlu
+                                                        </span>
+                                                    )
+                                                ) : (
+                                                    <span className="text-slate-300 font-medium text-xs">-</span>
+                                                )}
                                             </td>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )
-                    ) : (
-                        filteredNonPharmaData.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-20">
-                                <div className="p-4 bg-amber-50 text-amber-500 rounded-full mb-4">
-                                    <AlertCircle size={36} />
-                                </div>
-                                <h3 className="text-lg font-bold text-slate-800">Ürün Bulunamadı</h3>
-                                <p className="text-slate-500 font-medium mt-1 text-center max-w-sm">
-                                    Son 6 ayda satış hareketi görmüş herhangi bir ilaç dışı ürün bulunmamaktadır.
-                                </p>
-                            </div>
-                        ) : (
-                            <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-50/50 border-b border-slate-100">
-                                    <tr>
-                                        <th className="px-8 py-5 w-12">
-                                            <input
-                                                type="checkbox"
-                                                disabled={isQuerying}
-                                                checked={filteredNonPharmaData.length > 0 && filteredNonPharmaData.every(item => selectedBarcodes.has(item.barkod))}
-                                                onChange={() => handleSelectAll(filteredNonPharmaData)}
-                                                className="w-4 h-4 accent-amber-600 cursor-pointer rounded border-stone-300"
-                                            />
-                                        </th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Kategori</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">Stok</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">Son Hareket</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Lokal PSF</th>
-                                        <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Depo PSF</th>
-                                        <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Fark Durumu</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-50">
-                                    {filteredNonPharmaData.map((item, idx) => {
-                                        const cached = cacheData[item.barkod];
-                                        return (
-                                            <tr key={idx} className="hover:bg-slate-50/20 transition-colors group">
-                                                <td className="px-8 py-5">
-                                                    <input
-                                                        type="checkbox"
-                                                        disabled={isQuerying}
-                                                        checked={selectedBarcodes.has(item.barkod)}
-                                                        onChange={() => handleSelectRow(item.barkod)}
-                                                        className="w-4 h-4 accent-amber-600 cursor-pointer rounded border-stone-300"
-                                                    />
-                                                </td>
-                                                <td className="px-6 py-5">
-                                                    <div>
-                                                        <div className="font-bold text-slate-700">{item.ad}</div>
-                                                        <div className="text-[10px] font-mono text-slate-400 mt-0.5">{item.barkod}</div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-5">
-                                                    <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">
-                                                        {item.kategori_ad}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-5 text-center">
-                                                    <span className={`font-bold ${item.stock === 0 ? 'text-slate-300' : 'text-slate-600'}`}>
-                                                        {item.stock}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-5 text-center text-xs font-bold text-slate-600">
-                                                    {item.daysInactive === 0 ? 'Bugün' : `${item.daysInactive} gün önce`}
-                                                </td>
-                                                <td className="px-6 py-5 text-right font-semibold text-slate-600">
-                                                    {item.localPsf.toFixed(2)} ₺
-                                                </td>
-                                                <td className="px-6 py-5 text-right font-semibold text-slate-800">
-                                                    {cached ? (
-                                                        <>
-                                                            {cached.fiyat_etiket.toFixed(2)} ₺
-                                                            <div className="text-[9px] text-slate-400 font-medium mt-0.5">{cached.depo} ({cached.date?.split('T')[0]})</div>
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-slate-300 text-xs italic">Sorgulanmamış</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-8 py-5 text-right">
-                                                    {cached ? (
-                                                        cached.fiyat_etiket > item.localPsf ? (
-                                                            <span className="inline-flex items-center gap-0.5 font-bold text-red-500">
-                                                                +{ (cached.fiyat_etiket - item.localPsf).toFixed(2) } ₺ (+{ ((cached.fiyat_etiket - item.localPsf) / item.localPsf * 100).toFixed(0) }%)
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-0.5 font-bold text-emerald-500">
-                                                                Uyumlu
-                                                            </span>
-                                                        )
-                                                    ) : (
-                                                        <span className="text-slate-300 font-medium text-xs">-</span>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        )
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     )}
                 </div>
             </div>

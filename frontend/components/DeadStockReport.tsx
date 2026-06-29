@@ -223,62 +223,70 @@ export default function DeadStockReport({ data, gln, addToReturns }: DeadStockRe
                     <table className="w-full text-left text-sm">
                         <thead className="bg-slate-50/50 border-b border-slate-100">
                             <tr>
-                                <th onClick={() => handleSort('ad')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Ürün Detayı{renderSortIcon('ad')}</th>
-                                <th onClick={() => handleSort('barkod')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Barkod{renderSortIcon('barkod')}</th>
-                                <th onClick={() => handleSort('stok')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Mevcut Stok{renderSortIcon('stok')}</th>
-                                <th onClick={() => handleSort('son_satis')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Hareketsizlik{renderSortIcon('son_satis')}</th>
-                                <th onClick={() => handleSort('deger')} className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right cursor-pointer hover:text-slate-600 select-none">Potansiyel Kayıp{renderSortIcon('deger')}</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px] select-none">İşlem</th>
+                                <th onClick={() => handleSort('ad')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Ürün Detayı{renderSortIcon('ad')}</th>
+                                <th onClick={() => handleSort('stok')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Mevcut Stok{renderSortIcon('stok')}</th>
+                                <th onClick={() => handleSort('son_satis')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-slate-600 select-none">Hareketsizlik{renderSortIcon('son_satis')}</th>
+                                <th onClick={() => handleSort('deger')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right cursor-pointer hover:text-slate-600 select-none">Potansiyel Kayıp{renderSortIcon('deger')}</th>
+                                <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px] select-none">İşlem</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {sortedData.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
-                                    <td className="px-8 py-5">
-                                        <p className="font-bold text-slate-700 group-hover:text-blue-600 transition-colors">{item.ad}</p>
+                                    <td className="px-3 py-1">
+                                        <div className="flex items-center gap-2.5">
+                                            <span className="font-bold text-slate-700 group-hover:text-blue-650 transition-colors">{item.ad}</span>
+                                            <button
+                                                onClick={() => copyBarkod(item.barkod)}
+                                                className={`p-1 rounded hover:bg-stone-105 transition-all flex items-center gap-1.5 text-[10px] font-mono border ${
+                                                    copiedBarkod === item.barkod ? "text-teal-600 font-bold bg-teal-50 border-teal-200" : "text-stone-400 bg-stone-50/50 border-stone-200/60"
+                                                }`}
+                                                title="Barkodu Kopyala"
+                                            >
+                                                {copiedBarkod === item.barkod ? (
+                                                    <Check size={10} className="text-teal-500" />
+                                                ) : (
+                                                    <Copy size={9} />
+                                                )}
+                                                <span>{item.barkod}</span>
+                                            </button>
+                                        </div>
                                     </td>
-                                    <td className="px-8 py-5">
-                                        <button
-                                            onClick={() => copyBarkod(item.barkod)}
-                                            className="flex items-center gap-1.5 font-mono text-[11px] px-2.5 py-1.5 rounded-lg border transition-all bg-slate-50 border-slate-200 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700 text-slate-500">
-                                            {copiedBarkod === item.barkod
-                                                ? <><Check size={11} className="text-teal-500" /><span className="text-teal-600">Kopyalandı</span></>
-                                                : <><Copy size={11} />{item.barkod}</>}
-                                        </button>
-                                    </td>
-                                    <td className="px-8 py-5">
+                                    <td className="px-3 py-1">
                                         <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg font-bold">{item.stok} Adet</span>
                                     </td>
-                                    <td className="px-8 py-5">
+                                    <td className="px-3 py-1">
                                         <div className="flex items-center gap-2 text-red-500 font-bold">
                                             <AlertCircle size={14} />
                                             {item.son_satis} Gün
                                         </div>
                                     </td>
-                                    <td className="px-8 py-5 text-right font-black text-slate-800">
+                                    <td className="px-3 py-1 text-right font-black text-slate-800">
                                         {item.deger}
                                     </td>
-                                    <td className="px-8 py-5 text-center flex justify-center">
-                                        <button
-                                            onClick={() => handleAdd(item)}
-                                            className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
-                                                addedItems[item.barkod]
-                                                    ? "bg-emerald-600 border-emerald-600 text-white"
-                                                    : "bg-white border-slate-200 hover:border-slate-300 text-slate-600 hover:bg-slate-50 active:scale-95"
-                                            }`}
-                                        >
-                                            {addedItems[item.barkod] ? (
-                                                <>
-                                                    <Check size={12} />
-                                                    Eklendi ✓
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <RefreshCw size={12} />
-                                                    İadeye Ekle
-                                                </>
-                                            )}
-                                        </button>
+                                    <td className="px-3 py-1 text-center">
+                                        <div className="flex justify-center">
+                                            <button
+                                                onClick={() => handleAdd(item)}
+                                                className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                                    addedItems[item.barkod]
+                                                        ? "bg-emerald-600 border-emerald-600 text-white"
+                                                        : "bg-white border-slate-200 hover:border-slate-300 text-slate-600 hover:bg-slate-50 active:scale-95"
+                                                }`}
+                                            >
+                                                {addedItems[item.barkod] ? (
+                                                    <>
+                                                        <Check size={12} />
+                                                        Eklendi ✓
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <RefreshCw size={12} />
+                                                        İadeye Ekle
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}

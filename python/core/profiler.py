@@ -110,8 +110,9 @@ def profile_data(df):
                 try:
                     parts = entry.split(':')
                     if len(parts) > 1 and '+' in parts[1]:
-                        # Format örneği -> 2024-01-01:10+3
-                        ana, mf = map(int, parts[1].split('+'))
+                        # Format örneği -> 2024-01-01:10+3 veya 2024-01-01:10+3@Depo
+                        val_part = parts[1].split('@')[0] if '@' in parts[1] else parts[1]
+                        ana, mf = map(int, val_part.split('+'))
                         if mf > 0: 
                             mf_data.append({'ana': ana, 'mf': mf})
                 except: continue

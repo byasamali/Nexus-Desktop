@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import { PackageX, Search, AlertCircle, TrendingDown, Copy, Check, ShoppingCart, Plus, Minus } from 'lucide-react';
+import { PackageX, Search, AlertCircle, TrendingDown, Copy, Check, ShoppingCart, Plus, Minus, Download, FileText } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface OutOfStockItem {
   barkod: string;
@@ -73,10 +74,83 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
 
   const addToCartHandler = async (item: OutOfStockItem) => {
     const qty = cartQty[item.barkod] || 1;
-    // Supabase sepet entegrasyonu için global event dispatch
     window.dispatchEvent(new CustomEvent('nexus:addToCart', { detail: { barkod: item.barkod, ad: item.ad, qty } }));
     setAddedToCart(prev => ({ ...prev, [item.barkod]: true }));
     setTimeout(() => setAddedToCart(prev => ({ ...prev, [item.barkod]: false })), 2000);
+  };
+
+  const downloadXlsx = () => {
+    if ((data || []).length === 0) return;
+    const rows = (data || []).map(item => ({
+      'Ürün Adı': item.ad,
+      'Barkod': item.barkod,
+      'Aylık Hız': item.aylik_hiz ? `${item.aylik_hiz.toFixed(1)} / ay` : '—'
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 15 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Stoğu Tükenmiş Ürünler');
+    XLSX.writeFile(wb, 'stogu_tukenmis_urunler.xlsx');
+  };
+
+  const downloadPdf = () => {
+    if ((data || []).length === 0) return;
+    const headers = ['Ürün Adı', 'Barkod', 'Aylık Hız'];
+    const rows = (data || []).map(item => [
+      item.ad,
+      item.barkod,
+      item.aylik_hiz ? `${item.aylik_hiz.toFixed(1)} / ay` : '—'
+    ]);
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const html = `
+      <html>
+        <head>
+          <title>Stoğu Tükenmiş Ürünler Raporu</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; padding: 20px; color: #334155; }
+            h1 { font-size: 20px; font-weight: 800; margin-bottom: 20px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            th { background-color: #f8fafc; color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+            td { padding: 12px 10px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #334155; }
+            tr:nth-child(even) td { background-color: #fafafa; }
+            .footer { margin-top: 30px; font-size: 10px; color: #94a3b8; text-align: right; }
+            @media print {
+              body { padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Stoğu Tükenmiş Ürünler Raporu</h1>
+          <table>
+            <thead>
+              <tr>
+                ${headers.map(h => `<th>${h}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(row => `
+                <tr>
+                  ${row.map(cell => `<td>${cell}</td>`).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="footer">Oluşturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}</div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
   if (!data || data.length === 0) {
@@ -104,15 +178,35 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
             </p>
           </div>
         </div>
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input
-            type="text"
-            placeholder="Ürün adı veya barkod ara..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-rose-200 outline-none font-medium text-sm transition-all"
-          />
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={downloadXlsx}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-bold text-sm rounded-2xl transition-all border border-emerald-100"
+              title="Excel Olarak İndir"
+            >
+              <Download size={16} />
+              Excel
+            </button>
+            <button
+              onClick={downloadPdf}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-700 hover:bg-red-100 font-bold text-sm rounded-2xl transition-all border border-red-100"
+              title="PDF Olarak İndir"
+            >
+              <FileText size={16} />
+              PDF
+            </button>
+          </div>
+          <div className="relative w-full md:w-80">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input
+              type="text"
+              placeholder="Ürün adı veya barkod ara..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-rose-200 outline-none font-medium text-sm transition-all"
+            />
+          </div>
         </div>
       </div>
 
@@ -122,20 +216,35 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
               <tr>
-                <th onClick={() => handleSort('ad')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Ürün{renderSortIcon('ad')}</th>
-                <th onClick={() => handleSort('aylik_hiz')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Aylık Hız{renderSortIcon('aylik_hiz')}</th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] select-none">Stok</th>
-                <th onClick={() => handleSort('barkod')} className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Barkod{renderSortIcon('barkod')}</th>
-                <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-wide text-[10px] select-none">Sepete Ekle</th>
+                <th onClick={() => handleSort('ad')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Ürün{renderSortIcon('ad')}</th>
+                <th onClick={() => handleSort('aylik_hiz')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-wide text-[10px] cursor-pointer hover:text-slate-600 select-none">Aylık Hız{renderSortIcon('aylik_hiz')}</th>
+                <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-wide text-[10px] select-none">Stok</th>
+                <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-wide text-[10px] select-none">Sepete Ekle</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {sortedData.map((item, idx) => (
                 <tr key={idx} className="hover:bg-rose-50/30 transition-colors group">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-slate-700 group-hover:text-rose-600 transition-colors">{item.ad}</p>
+                  <td className="px-3 py-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-bold text-slate-700 group-hover:text-rose-600 transition-colors">{item.ad}</span>
+                      <button
+                        onClick={() => copyBarkod(item.barkod)}
+                        className={`p-1 rounded hover:bg-stone-105 transition-all flex items-center gap-1.5 text-[10px] font-mono border ${
+                          copiedBarkod === item.barkod ? "text-teal-650 font-bold bg-teal-50 border-teal-200" : "text-stone-400 bg-stone-50/50 border-stone-200/60"
+                        }`}
+                        title="Barkodu Kopyala"
+                      >
+                        {copiedBarkod === item.barkod ? (
+                          <Check size={10} className="text-teal-500" />
+                        ) : (
+                          <Copy size={9} />
+                        )}
+                        <span>{item.barkod}</span>
+                      </button>
+                    </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-3 py-1">
                     {item.aylik_hiz != null && item.aylik_hiz > 0 ? (
                       <div className="flex items-center gap-1.5 text-orange-500 font-bold text-xs">
                         <TrendingDown size={13} />
@@ -145,23 +254,12 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
                       <span className="text-slate-300 text-xs">—</span>
                     )}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-3 py-1">
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg font-black text-xs">
                       <AlertCircle size={12} /> 0
                     </span>
                   </td>
-                  {/* Barkod kopyala */}
-                  <td className="px-6 py-4">
-                    <button
-                      onClick={() => copyBarkod(item.barkod)}
-                      className="flex items-center gap-1.5 font-mono text-[11px] px-2.5 py-1.5 rounded-lg border transition-all bg-slate-50 border-slate-200 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700 text-slate-500">
-                      {copiedBarkod === item.barkod
-                        ? <><Check size={11} className="text-teal-500" /><span className="text-teal-600">Kopyalandı</span></>
-                        : <><Copy size={11} />{item.barkod}</>}
-                    </button>
-                  </td>
-                  {/* Sepete ekle */}
-                  <td className="px-6 py-4">
+                  <td className="px-3 py-1">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1 border border-slate-200 rounded-lg overflow-hidden bg-white">
                         <button

@@ -35,6 +35,36 @@ function parseMiadStr(raw: string | undefined | null): string {
   return str;
 }
 
+const atc4Names: Record<string, string> = {
+  'A02B': 'Mide Koruyucular (Proton Pompası İnh.)',
+  'A10B': 'Oral Antidiyabetikler (Şeker Hapları)',
+  'A10A': 'İnsülinler (Şeker İlaçları)',
+  'B01A': 'Kan Sulandırıcılar (Antitrombotikler)',
+  'C09A': 'Tansiyon İlaçları (ACE İnhibitörleri)',
+  'C10A': 'Kolesterol İlaçları (Statine vb.)',
+  'J01C': 'Penisilin Grubu Antibiyotikler',
+  'J01D': 'Sefalosporin Grubu Antibiyotikler',
+  'J01F': 'Makrolid Grubu Antibiyotikler',
+  'J01X': 'Diğer Antibakteriyel İlaçlar',
+  'M01A': 'Ağrı/Romatizma İlaçları (Romatoid vb.)',
+  'N02B': 'Ağrı Kesici & Ateş Düşürücüler (Analjezikler)',
+  'N05A': 'Antipsikotik İlaçlar',
+  'N05B': 'Sakinleştirici İlaçlar (Anksiyolitikler)',
+  'N06A': 'Antidepresan İlaçlar',
+  'R03A': 'Astım/KOAH İnhalatör İlaçları',
+  'R05C': 'Öksürük Şurupları & Balgam Söktürücüler',
+  'R06A': 'Alerji İlaçları (Antihistaminikler)',
+  'A11A': 'Multivitamin Takviyeleri',
+  'A07A': 'İshal & Bağırsak Enfeksiyonu İlaçları'
+};
+
+function formatAtc4(atc4: string): string {
+  if (!atc4) return 'Bilinmeyen Tedavi Grubu';
+  const clean = atc4.trim().toUpperCase();
+  const name = atc4Names[clean];
+  return name ? `${clean} - ${name}` : clean;
+}
+
 // ── Mini KPI kartı ────────────────────────────────────────────────────────────
 function KpiCard({ icon: Icon, iconCls, label, value, sub, onClick }: any) {
   return (
@@ -462,7 +492,7 @@ export default function GeneralReports({ data }: { data: any }) {
               return (
                 <div key={idx} className="space-y-1">
                   <div className="flex justify-between text-xs font-bold px-0.5">
-                    <span className="text-slate-700 uppercase tracking-tight truncate pr-2">{idx + 1}. {item.atc4}</span>
+                    <span className="text-slate-700 uppercase tracking-tight truncate pr-2" title={formatAtc4(item.atc4)}>{idx + 1}. {formatAtc4(item.atc4)}</span>
                     <span className="text-slate-400 shrink-0">{item.satis_adedi.toLocaleString('tr-TR')} kutu</span>
                   </div>
                   <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">

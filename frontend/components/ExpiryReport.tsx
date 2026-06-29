@@ -1,7 +1,6 @@
-"use client";
-
 import React, { useState } from 'react';
-import { AlertTriangle, Search, CalendarClock, Check, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Search, CalendarClock, Check, RefreshCw, Download, FileText } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 function parseMiadStr(raw: string | undefined | null): string {
     if (!raw) return 'Belirsiz';
@@ -32,13 +31,128 @@ interface ExpiryReportProps {
 export default function ExpiryReport({ data, addToReturns }: ExpiryReportProps) {
     const [search, setSearch] = useState("");
     const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
+    const [sortField, setSortField] = useState<string | null>(null);
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
     const activeData = data?.filter(item => item.stok > 0) || [];
+
+    const downloadXlsx = () => {
+        if (activeData.length === 0) return;
+        const rows = activeData.map(item => ({
+            'Ürün Adı': item.ad,
+            'Barkod': item.barkod,
+            'Stok': item.stok,
+            'Son Kullanma Tarihi': parseMiadStr(item.miad),
+            'Mali Değer': item.tutar
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 10 }, { wch: 25 }, { wch: 15 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Miad Risk Raporu');
+        XLSX.writeFile(wb, 'miad_risk_analizi.xlsx');
+    };
+
+    const downloadPdf = () => {
+        if (activeData.length === 0) return;
+        const headers = ['Ürün Adı', 'Barkod', 'Stok', 'Son Kullanma', 'Mali Değer'];
+        const rows = activeData.map(item => [
+            item.ad,
+            item.barkod,
+            String(item.stok),
+            parseMiadStr(item.miad),
+            String(item.tutar)
+        ]);
+
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+
+        const html = `
+            <html>
+                <head>
+                    <title>Miad Risk Analizi Raporu</title>
+                    <style>
+                        body { font-family: 'Inter', sans-serif; padding: 20px; color: #334155; }
+                        h1 { font-size: 20px; font-weight: 800; margin-bottom: 20px; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                        th { background-color: #f8fafc; color: #64748b; font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; padding: 12px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+                        td { padding: 12px 10px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: #334155; }
+                        tr:nth-child(even) td { background-color: #fafafa; }
+                        .footer { margin-top: 30px; font-size: 10px; color: #94a3b8; text-align: right; }
+                        @media print {
+                            body { padding: 0; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <h1>Miad Risk Analizi Raporu</h1>
+                    <table>
+                        <thead>
+                            <tr>
+                                ${headers.map(h => `<th>${h}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(row => `
+                                <tr>
+                                    ${row.map(cell => `<td>${cell}</td>`).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    <div class="footer">Oluşturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')} ${new Date().toLocaleTimeString('tr-TR')}</div>
+                    <script>
+                        window.onload = function() {
+                            window.print();
+                            setTimeout(function() { window.close(); }, 500);
+                        }
+                    </script>
+                </body>
+            </html>
+        `;
+
+        printWindow.document.write(html);
+        printWindow.document.close();
+    };
+
+    const handleSort = (field: string) => {
+        if (sortField === field) {
+            setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortOrder('asc');
+        }
+    };
 
     const filteredData = activeData.filter(item =>
         item.ad?.toLowerCase().includes(search.toLowerCase()) ||
         item.barkod?.includes(search)
     );
+
+    const sortedData = React.useMemo(() => {
+        let result = [...filteredData];
+        if (sortField) {
+            result.sort((a, b) => {
+                let aVal = a[sortField];
+                let bVal = b[sortField];
+                
+                if (sortField === 'stok') {
+                    aVal = Number(aVal) || 0;
+                    bVal = Number(bVal) || 0;
+                } else if (sortField === 'tutar') {
+                    aVal = parseFloat(String(aVal).replace(/[^\d.-]/g, '')) || 0;
+                    bVal = parseFloat(String(bVal).replace(/[^\d.-]/g, '')) || 0;
+                } else {
+                    aVal = String(aVal).toLowerCase();
+                    bVal = String(bVal).toLowerCase();
+                }
+
+                if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+                if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+        return result;
+    }, [filteredData, sortField, sortOrder]);
 
     const handleAdd = async (item: any) => {
         if (!addToReturns) return;
@@ -70,15 +184,35 @@ export default function ExpiryReport({ data, addToReturns }: ExpiryReportProps) 
                         <p className="text-slate-500 font-medium">Son 6 aya girmiş <b className="text-orange-600">{activeData.length}</b> kritik ürün var.</p>
                     </div>
                 </div>
-                <div className="relative w-full md:w-80">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                    <input
-                        type="text"
-                        placeholder="Miadlı ürün ara..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-orange-200 outline-none font-medium text-sm transition-all"
-                    />
+                <div className="flex items-center gap-4 w-full md:w-auto">
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={downloadXlsx}
+                            className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-bold text-sm rounded-2xl transition-all border border-emerald-100"
+                            title="Excel Olarak İndir"
+                        >
+                            <Download size={16} />
+                            Excel
+                        </button>
+                        <button
+                            onClick={downloadPdf}
+                            className="flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-700 hover:bg-red-100 font-bold text-sm rounded-2xl transition-all border border-red-100"
+                            title="PDF Olarak İndir"
+                        >
+                            <FileText size={16} />
+                            PDF
+                        </button>
+                    </div>
+                    <div className="relative w-full md:w-80">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input
+                            type="text"
+                            placeholder="Miadlı ürün ara..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-orange-200 outline-none font-medium text-sm transition-all"
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -87,46 +221,56 @@ export default function ExpiryReport({ data, addToReturns }: ExpiryReportProps) 
                     <table className="w-full text-left text-sm">
                         <thead className="bg-orange-50/30 border-b border-orange-100">
                             <tr>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Stok</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Son Kullanma</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right">Mali Değer</th>
-                                <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px]">İşlem</th>
+                                <th onClick={() => handleSort('ad')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-650 select-none">
+                                    Ürün {sortField === 'ad' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                </th>
+                                <th onClick={() => handleSort('stok')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-650 select-none">
+                                    Stok {sortField === 'stok' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                </th>
+                                <th onClick={() => handleSort('miad')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-650 select-none">
+                                    Son Kullanma {sortField === 'miad' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                </th>
+                                <th onClick={() => handleSort('tutar')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right cursor-pointer hover:text-orange-650 select-none">
+                                    Mali Değer {sortField === 'tutar' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                </th>
+                                <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px] select-none">İşlem</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
-                            {filteredData.map((item, idx) => (
+                            {sortedData.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-orange-50/10 transition-colors group">
-                                    <td className="px-8 py-5">
+                                    <td className="px-3 py-1">
                                         <div>
                                             <div className="font-bold text-slate-700">{item.ad}</div>
                                             <div className="text-[10px] font-mono text-slate-400 mt-0.5">{item.barkod}</div>
                                         </div>
                                     </td>
-                                    <td className="px-8 py-5"><span className="font-bold text-slate-600">{item.stok}</span></td>
-                                    <td className="px-8 py-5"><span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg font-black text-xs">{parseMiadStr(item.miad)}</span></td>
-                                    <td className="px-8 py-5 text-right font-black text-slate-800">{item.tutar}</td>
-                                    <td className="px-8 py-5 text-center flex justify-center">
-                                        <button
-                                            onClick={() => handleAdd(item)}
-                                            className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
-                                                addedItems[item.barkod]
-                                                    ? "bg-emerald-600 border-emerald-600 text-white"
-                                                    : "bg-white border-orange-200 hover:border-orange-300 text-orange-600 hover:bg-orange-50/50 active:scale-95"
-                                            }`}
-                                        >
-                                            {addedItems[item.barkod] ? (
-                                                <>
-                                                    <Check size={12} />
-                                                    Eklendi ✓
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <RefreshCw size={12} />
-                                                    İadeye Ekle
-                                                </>
-                                            )}
-                                        </button>
+                                    <td className="px-3 py-1"><span className="font-bold text-slate-600">{item.stok}</span></td>
+                                    <td className="px-3 py-1"><span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg font-black text-xs">{parseMiadStr(item.miad)}</span></td>
+                                    <td className="px-3 py-1 text-right font-black text-slate-800">{item.tutar}</td>
+                                    <td className="px-3 py-1 text-center">
+                                        <div className="flex justify-center">
+                                            <button
+                                                onClick={() => handleAdd(item)}
+                                                className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                                    addedItems[item.barkod]
+                                                        ? "bg-emerald-600 border-emerald-600 text-white"
+                                                        : "bg-white border-orange-200 hover:border-orange-300 text-orange-600 hover:bg-orange-50/50 active:scale-95"
+                                                }`}
+                                            >
+                                                {addedItems[item.barkod] ? (
+                                                    <>
+                                                        <Check size={12} />
+                                                        Eklendi ✓
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <RefreshCw size={12} />
+                                                        İadeye Ekle
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}

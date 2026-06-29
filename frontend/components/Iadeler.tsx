@@ -1,13 +1,26 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Download, Trash2, ShieldAlert, Check } from 'lucide-react';
+import { RefreshCw, Download, Trash2, ShieldAlert, Check, Copy } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function IadelerPage({ gln }: { gln: string }) {
     const [returnsList, setReturnsList] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [successMsg, setSuccessMsg] = useState<string | null>(null);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    const copyFn = async (barcode: string) => {
+        try {
+            if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(barcode);
+            else {
+                const el = document.createElement("textarea");
+                el.value = barcode; document.body.appendChild(el); el.select();
+                document.execCommand("copy"); document.body.removeChild(el);
+            }
+            setCopiedId(barcode); setTimeout(() => setCopiedId(null), 2000);
+        } catch { }
+    };
 
     const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
 
@@ -228,18 +241,34 @@ export default function IadelerPage({ gln }: { gln: string }) {
                         <table className="w-full text-left text-sm">
                             <thead className="bg-slate-50 border-b border-slate-100">
                                 <tr>
-                                    <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün Adı</th>
-                                    <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Barkod</th>
-                                    <th className="px-8 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px] w-48">İade Adedi</th>
-                                    <th className="px-8 py-5 text-right font-black text-slate-400 uppercase tracking-widest text-[10px] w-24">Sil</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün Adı</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] w-48">İade Adedi</th>
+                                    <th className="px-3 py-1.5 text-right font-black text-slate-400 uppercase tracking-widest text-[10px] w-24">Sil</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
                                 {returnsList.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="px-8 py-5 font-bold text-slate-700 text-xs">{item.ad}</td>
-                                        <td className="px-8 py-5 font-mono text-xs text-slate-500">{item.barkod}</td>
-                                        <td className="px-8 py-5">
+                                        <td className="px-3 py-0.5 text-xs">
+                                            <div className="flex items-center gap-2.5">
+                                                <span className="font-bold text-slate-750">{item.ad}</span>
+                                                <button
+                                                    onClick={() => copyFn(item.barkod)}
+                                                    className={`p-1 rounded hover:bg-stone-105 transition-all flex items-center gap-1.5 text-[10px] font-mono border ${
+                                                        copiedId === item.barkod ? "text-teal-600 font-bold bg-teal-50 border-teal-200" : "text-stone-400 bg-stone-50/50 border-stone-200/60"
+                                                    }`}
+                                                    title="Barkodu Kopyala"
+                                                >
+                                                    {copiedId === item.barkod ? (
+                                                        <Check size={10} className="text-teal-500" />
+                                                    ) : (
+                                                        <Copy size={9} />
+                                                    )}
+                                                    <span>{item.barkod}</span>
+                                                </button>
+                                            </div>
+                                        </td>
+                                        <td className="px-3 py-0.5">
                                             <div className="flex items-center gap-1 border border-slate-200 rounded-xl overflow-hidden bg-white w-fit">
                                                 <button
                                                     onClick={() => updateReturnQty(item.barkod, item.adet - 1)}
@@ -262,7 +291,7 @@ export default function IadelerPage({ gln }: { gln: string }) {
                                                 </button>
                                             </div>
                                         </td>
-                                        <td className="px-8 py-5 text-right">
+                                        <td className="px-3 py-0.5 text-right">
                                             <button
                                                 onClick={() => removeFromReturns(item.barkod)}
                                                 className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"

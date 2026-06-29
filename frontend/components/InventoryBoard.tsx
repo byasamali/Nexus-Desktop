@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Users, UserPlus, UserMinus, FileSpreadsheet,
-    Printer, CheckCircle2, ChevronRight, PackageSearch
+    Printer, CheckCircle2, ChevronRight, PackageSearch, AlertCircle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -30,6 +30,7 @@ export default function InventoryBoard({ data: initialData, gln }: { data: Perso
     const [personnelCount, setPersonnelCount] = useState(initialData?.length || 3);
     const [personnelLists, setPersonnelLists] = useState<PersonnelData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [showInfoModal, setShowInfoModal] = useState(false);
 
     const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
 
@@ -183,7 +184,16 @@ export default function InventoryBoard({ data: initialData, gln }: { data: Perso
                         <PackageSearch size={32} />
                     </div>
                     <div>
-                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">Akıllı Sayım Yönetimi</h2>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-2xl font-black text-slate-800 tracking-tight">Akıllı Sayım Yönetimi</h2>
+                            <button
+                                onClick={() => setShowInfoModal(true)}
+                                className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded-full transition-all"
+                                title="Çalışma Mantığı"
+                            >
+                                <AlertCircle size={16} />
+                            </button>
+                        </div>
                         <p className="text-slate-500 font-medium">Toplam {allProducts.length} aktif ürün planlanıyor.</p>
                     </div>
                 </div>
@@ -270,6 +280,36 @@ export default function InventoryBoard({ data: initialData, gln }: { data: Perso
                     </div>
                 ))}
             </div>
+
+            {/* Çalışma Mantığı Bilgi Modalı */}
+            {showInfoModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/55 backdrop-blur-sm animate-fadeIn">
+                    <div className="bg-white rounded-[2rem] border border-slate-100 shadow-2xl p-8 max-w-lg w-full space-y-6 relative">
+                        <h3 className="text-xl font-black text-slate-800 tracking-tight">Akıllı Sayım Çalışma Mantığı</h3>
+                        
+                        <div className="space-y-4 text-sm text-slate-600 leading-relaxed font-medium">
+                            <p>
+                                🎯 <b>Adil ve Dengeli Dağıtım:</b> Sistemdeki tüm aktif ilaç ve ilaç dışı ürünler, belirlediğiniz personel sayısına göre <b>kalan stok hacimleri ve kalem sayıları göz önüne alınarak adil bir şekilde bölünür.</b>
+                            </p>
+                            <p>
+                                🗓️ <b>30 Günlük Dönemsel Plan:</b> Eczanenin tamamını bir kerede saymak yerine, sistem her personele 30 güne yayılmış günlük hedefler sunar. Böylece eczane işleyişi aksamadan <b>her gün küçük porsiyonlar halinde</b> sayım tamamlanır.
+                            </p>
+                            <p>
+                                📥 <b>Esnek Çıktı ve Paylaşım:</b> Her personel için özel hazırlanan sayım listesini <b>Excel dosyası</b> olarak indirebilir veya doğrudan <b>A4 formatında yazdırarak</b> elden teslim edebilirsiniz.
+                            </p>
+                        </div>
+
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => setShowInfoModal(false)}
+                                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-705 text-white font-bold rounded-xl text-sm transition-all shadow-md"
+                            >
+                                Anladım
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

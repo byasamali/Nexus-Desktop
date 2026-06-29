@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
     ListX, Search, Plus, Trash2, Calendar, 
-    ShoppingCart, AlertCircle, Sparkles, Building2, Package, Check
+    ShoppingCart, AlertCircle, Sparkles, Building2, Package, Check, Copy, Truck
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { clsx, type ClassValue } from "clsx";
@@ -21,11 +21,24 @@ interface OutOfStockItem {
     notes?: string;
 }
 
-export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCartItem, setCart }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any }) {
+export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCartItem, setCart, onSearchInWarehouse }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any; onSearchInWarehouse?: (barcode: string) => void }) {
     const [items, setItems] = useState<OutOfStockItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    const copyFn = async (barcode: string) => {
+        try {
+            if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(barcode);
+            else {
+                const el = document.createElement("textarea");
+                el.value = barcode; document.body.appendChild(el); el.select();
+                document.execCommand("copy"); document.body.removeChild(el);
+            }
+            setCopiedId(barcode); setTimeout(() => setCopiedId(null), 2000);
+        } catch { }
+    };
 
     const downloadXlsx = () => {
         if (items.length === 0) return;
@@ -285,144 +298,97 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
-                {/* SOL: EKLEME PANELİ */}
-                <div className="space-y-6 lg:col-span-1">
-                    {/* ARAMA İLE İLAÇ EKLE */}
-                    <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm space-y-4">
-                        <h3 className="font-black text-slate-800 text-lg leading-tight flex items-center gap-2">
-                            <Search size={18} className="text-red-500" />
-                            İlaç Arama
-                        </h3>
-                        <p className="text-xs text-slate-400 font-medium">Eczane envanterinden hızlıca arayarak ekleyin.</p>
-                        
-                        <div className="relative">
-                            <input 
-                                type="text"
-                                placeholder="Barkod veya ilaç adı girin..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:bg-white transition-all"
-                            />
-                            <Search className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
-                        </div>
-
-                        {searchResults.length > 0 && (
-                            <div className="border border-slate-100 rounded-2xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-slate-50 bg-white shadow-lg">
-                                {searchResults.map((r, i) => (
-                                    <button 
-                                        key={i}
-                                        onClick={() => addItem(r)}
-                                        className="w-full flex items-center justify-between p-3 hover:bg-slate-50 text-left transition-colors"
-                                    >
-                                        <div className="min-w-0 pr-3">
-                                            <p className="text-xs font-bold text-slate-800 truncate">{r.name}</p>
-                                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">{r.barcode} · {r.depo}</p>
-                                        </div>
-                                        <div className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors">
-                                            <Plus size={14} />
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                        {searchQuery.trim() && searchResults.length === 0 && (
-                            <p className="text-xs text-slate-400 text-center py-2 font-medium">Sonuç bulunamadı.</p>
-                        )}
+            <div className="w-full animate-fadeIn">
+                <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[500px]">
+                    <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
+                        <h3 className="font-black text-slate-800 text-lg tracking-tight">Yok Listesindeki İlaçlar</h3>
+                        <span className="text-xs font-bold text-slate-400">{items.length} Kalem Listeleniyor</span>
                     </div>
-                </div>
 
-                {/* SAĞ: LİSTE TABLOSU */}
-                <div className="lg:col-span-2">
-                    <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[500px]">
-                        <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
-                            <h3 className="font-black text-slate-800 text-lg tracking-tight">Yok Listesindeki İlaçlar</h3>
-                            <span className="text-xs font-bold text-slate-400">{items.length} Kalem Listeleniyor</span>
-                        </div>
-
-                        {items.length > 0 ? (
-                            <div className="overflow-x-auto flex-1">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="border-b border-slate-100 bg-slate-50/50">
-                                            <th onClick={() => handleSort('name')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                İlaç Adı {sortField === 'name' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th onClick={() => handleSort('barcode')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                Barkod {sortField === 'barcode' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th onClick={() => handleSort('depo')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                En Son Depo {sortField === 'depo' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th onClick={() => handleSort('addedAt')} className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-600 select-none">
-                                                Ekleme Zamanı {sortField === 'addedAt' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                            </th>
-                                            <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right select-none">İşlem</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50">
-                                        {sortedItems.map((item, idx) => (
-                                            <tr key={item.barcode} className="hover:bg-slate-50/50 transition-colors group">
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="p-2 bg-red-50 text-red-500 rounded-xl">
-                                                            <Package size={16} />
-                                                        </div>
-                                                        <div className="min-w-0">
-                                                            <p className="text-xs font-bold text-slate-800 truncate">{item.name}</p>
-                                                            {item.notes && (
-                                                                <p className="text-[10px] text-red-500 font-medium mt-0.5 flex items-center gap-1">
-                                                                    <AlertCircle size={10} />
-                                                                    {item.notes}
-                                                                </p>
-                                                            )}
-                                                        </div>
+                    {items.length > 0 ? (
+                        <div className="overflow-x-auto flex-1">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="border-b border-slate-100 bg-slate-50/50">
+                                        <th onClick={() => handleSort('name')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-650 select-none">
+                                            İlaç Adı {sortField === 'name' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                                        </th>
+                                        <th className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-36">
+                                            Depoda Sorgula
+                                        </th>
+                                        <th className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-right select-none w-20">İşlem</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {sortedItems.map((item, idx) => (
+                                        <tr key={item.barcode} className="hover:bg-slate-50/50 transition-colors group">
+                                            <td className="px-3 py-0.5">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="p-1 bg-red-50 text-red-500 rounded-lg shrink-0">
+                                                        <Package size={12} />
                                                     </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-xs font-mono text-slate-500">{item.barcode}</td>
-                                                <td className="px-6 py-4 text-xs font-bold text-slate-600">
-                                                    <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-lg border border-slate-200">
-                                                        <Building2 size={12} className="text-slate-400" />
-                                                        {item.depo}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 text-xs text-slate-500">
-                                                    <span className="flex items-center gap-1.5">
-                                                        <Calendar size={12} className="text-slate-400" />
-                                                        {new Date(item.addedAt).toLocaleDateString('tr-TR', {
-                                                            day: 'numeric',
-                                                            month: 'short',
-                                                            hour: '2-digit',
-                                                            minute: '2-digit'
-                                                        })}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <button 
-                                                        onClick={() => removeItem(item.barcode)}
-                                                        className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:bg-red-50 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 border border-slate-100 hover:border-red-100 shadow-sm"
-                                                        title="Listeden Kaldır"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="text-xs font-bold text-slate-800 truncate">{item.name}</span>
+                                                            <button
+                                                                onClick={() => copyFn(item.barcode)}
+                                                                className={cn(
+                                                                    "p-0.5 px-1 rounded hover:bg-slate-100 transition-all flex items-center gap-1 text-[10px] font-mono",
+                                                                    copiedId === item.barcode ? "text-teal-650 bg-teal-50 border border-teal-200" : "text-slate-400 border border-stone-100 bg-stone-50/50"
+                                                                )}
+                                                                title="Barkodu Kopyala"
+                                                            >
+                                                                {copiedId === item.barcode ? (
+                                                                    <Check size={9} className="text-teal-500" />
+                                                                ) : (
+                                                                    <Copy size={8} />
+                                                                )}
+                                                                <span className="text-[9px] font-semibold">{item.barcode}</span>
+                                                            </button>
+                                                        </div>
+                                                        {item.notes && (
+                                                            <p className="text-[10px] text-red-500 font-medium mt-0.5 flex items-center gap-1">
+                                                                <AlertCircle size={10} />
+                                                                {item.notes}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-0.5 text-center">
+                                                <button
+                                                    onClick={() => onSearchInWarehouse?.(item.barcode)}
+                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100 text-[10px] font-bold transition-all shadow-sm"
+                                                >
+                                                    <Search size={11} />
+                                                    Sorgula
+                                                </button>
+                                            </td>
+                                            <td className="px-3 py-0.5 text-right">
+                                                <button 
+                                                    onClick={() => removeItem(item.barcode)}
+                                                    className="p-1 bg-slate-50 text-slate-400 rounded-xl hover:bg-red-50 hover:text-red-500 transition-all border border-slate-100 hover:border-red-100 shadow-sm"
+                                                    title="Listeden Kaldır"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                            <div className="h-16 w-16 bg-slate-50 text-slate-300 rounded-3xl flex items-center justify-center mb-4 border border-slate-100">
+                                <ListX size={28} />
                             </div>
-                        ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                                <div className="h-16 w-16 bg-slate-50 text-slate-300 rounded-3xl flex items-center justify-center mb-4 border border-slate-100">
-                                    <ListX size={28} />
-                                </div>
-                                <h4 className="text-base font-black text-slate-800">Yok Listeniz Boş</h4>
-                                <p className="text-xs text-slate-400 font-medium max-w-sm mt-1">
-                                    Harika! Şu an için eksik ilacınız bulunmuyor. Eklemek için yandaki arama veya manuel paneli kullanabilirsiniz.
-                                </p>
-                            </div>
-                        )}
-                    </div>
+                            <h4 className="text-base font-black text-slate-800">Yok Listeniz Boş</h4>
+                            <p className="text-xs text-slate-400 font-medium max-w-sm mt-1">
+                                Şu an için yok listesinde hiçbir ilacınız bulunmuyor.
+                            </p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
