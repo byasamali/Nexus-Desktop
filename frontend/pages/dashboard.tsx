@@ -2051,6 +2051,10 @@ export default function OrderCockpit() {
     setAiResults(prev => prev.filter(item => item.barkod !== productBarcode));
   };
 
+  const handleDeleteUrgentResult = (productBarcode: string) => {
+    setUrgentResults(prev => prev.filter(item => item.barkod !== productBarcode));
+  };
+
   const handleApplyAISuggestions = () => {
     const newCart = { ...cart };
     aiResults.forEach(r => {
@@ -2331,6 +2335,153 @@ export default function OrderCockpit() {
     const itemsToSend = urgentResults.filter(r => r.onerilen > 0);
     if (itemsToSend.length === 0) {
       alert("Sipariş adeti girilmiş acil ürün bulunamadı.");
+      return;
+    }
+    
+    itemsToSend.forEach((r, idx) => {
+      text += `${idx + 1}) *${r.ad}*\n`;
+      text += `   Barkod: ${r.barkod}\n`;
+      text += `   Sipariş: *${r.onerilen} Adet*${r.secilenBarem ? ` (MF: ${r.secilenBarem})` : ''}\n\n`;
+    });
+    
+    const url = `whatsapp://send?text=${encodeURIComponent(text)}`;
+    window.location.href = url;
+  };
+
+  const handleExportAIExcel = () => {
+    if (aiResults.length === 0) return;
+    const itemsToSend = aiResults.filter(r => r.onerilen > 0 && !r.hata);
+    if (itemsToSend.length === 0) {
+      alert("Sipariş adeti girilmiş ürün bulunamadı.");
+      return;
+    }
+    const rows = itemsToSend.map(r => ({
+      'Ürün Adı': r.ad,
+      'Barkod': r.barkod,
+      'Sipariş Adeti': r.onerilen,
+      'Sipariş MF\'si': r.secilenBarem || 'Yok'
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Akıllı Sipariş Raporu');
+    XLSX.writeFile(wb, 'akilli_siparis_raporu.xlsx');
+  };
+
+  const handleExportAIPdf = () => {
+    if (aiResults.length === 0) return;
+    const itemsToSend = aiResults.filter(r => r.onerilen > 0 && !r.hata);
+    if (itemsToSend.length === 0) {
+      alert("Sipariş adeti girilmiş ürün bulunamadı.");
+      return;
+    }
+
+    const printStyle = document.createElement('style');
+    printStyle.id = 'ai-print-style';
+    printStyle.innerHTML = `
+      @media print {
+        body * {
+          display: none !important;
+        }
+        #ai-print-container, #ai-print-container * {
+          display: block !important;
+        }
+        #ai-print-container {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          display: block !important;
+          font-family: 'Inter', sans-serif;
+          color: #334155;
+          padding: 20px;
+        }
+        h1 {
+          font-size: 18px;
+          font-weight: 800;
+          margin-bottom: 20px;
+          color: #5b21b6;
+          border-bottom: 2px solid #ddd6fe;
+          padding-bottom: 10px;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-top: 10px;
+        }
+        th {
+          background-color: #f5f3ff;
+          color: #5b21b6;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 9px;
+          letter-spacing: 0.05em;
+          padding: 10px 8px;
+          border-bottom: 1px solid #c084fc;
+          text-align: left;
+        }
+        td {
+          padding: 10px 8px;
+          border-bottom: 1px solid #f3e8ff;
+          font-size: 11px;
+          color: #334155;
+        }
+        tr:nth-child(even) td {
+          background-color: #faf5ff;
+        }
+        .footer {
+          margin-top: 30px;
+          font-size: 10px;
+          color: #94a3b8;
+          text-align: right;
+        }
+      }
+    `;
+
+    const printContainer = document.createElement('div');
+    printContainer.id = 'ai-print-container';
+    printContainer.innerHTML = `
+      <h1>Akıllı Sipariş Raporu</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>Ürün Adı</th>
+            <th>Barkod</th>
+            <th>Sipariş Adeti</th>
+            <th>Sipariş MF'si</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsToSend.map(r => `
+            <tr>
+              <td>${r.ad}</td>
+              <td>${r.barkod}</td>
+              <td>${r.onerilen}</td>
+              <td>${r.secilenBarem || 'Yok'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div class="footer">Oluşturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')}</div>
+    `;
+
+    document.body.appendChild(printStyle);
+    document.body.appendChild(printContainer);
+    
+    window.print();
+    
+    setTimeout(() => {
+      document.getElementById('ai-print-style')?.remove();
+      document.getElementById('ai-print-container')?.remove();
+    }, 1000);
+  };
+
+  const handleShareAIWhatsapp = () => {
+    if (aiResults.length === 0) return;
+    
+    let text = `🤖 *AKILLI SİPARİŞ RAPORU (${new Date().toLocaleDateString('tr-TR')})* 🤖\n\n`;
+    const itemsToSend = aiResults.filter(r => r.onerilen > 0 && !r.hata);
+    if (itemsToSend.length === 0) {
+      alert("Sipariş adeti girilmiş ürün bulunamadı.");
       return;
     }
     
@@ -5120,6 +5271,14 @@ export default function OrderCockpit() {
                                       >
                                         {r.ad}
                                       </span>
+                                      {/* Barkod kopyalama */}
+                                      <button
+                                        onClick={() => navigator.clipboard?.writeText(r.barkod)}
+                                        className="shrink-0 p-0.5 text-emerald-600 hover:text-emerald-800 transition-all cursor-pointer"
+                                        title={`Barkodu kopyala: ${r.barkod}`}
+                                      >
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                      </button>
                                       {r.whyData && (
                                         <button
                                           onClick={() => setWhyItem(r)}
@@ -5138,6 +5297,14 @@ export default function OrderCockpit() {
                                           ⚖
                                         </button>
                                       )}
+                                      {/* Sil butonu */}
+                                      <button
+                                        onClick={() => handleDeleteUrgentResult(r.barkod)}
+                                        className="shrink-0 p-0.5 text-red-500 hover:text-red-750 transition-all cursor-pointer ml-auto"
+                                        title="Simülasyondan Kaldır"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
                                     </div>
                                     <span 
                                       onClick={() => {
@@ -5374,10 +5541,23 @@ export default function OrderCockpit() {
                   </div>
                 </div>
 
-                {/* AKSİYON & LOADING */}
                 <div className="flex items-center justify-center gap-3 py-1">
+                  {aiResults.length > 0 && !aiSimulating && (
+                    <div className="flex items-center gap-1.5 border-r border-stone-200 pr-3 mr-1.5 shrink-0">
+                      <button onClick={handleExportAIExcel} className="h-8 px-2.5 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1 cursor-pointer" title="Excel Olarak İndir">
+                        <Download size={11} /> Excel
+                      </button>
+                      <button onClick={handleExportAIPdf} className="h-8 px-2.5 rounded-lg text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors flex items-center gap-1 cursor-pointer" title="PDF Raporu Oluştur">
+                        <FileText size={11} /> PDF
+                      </button>
+                      <button onClick={handleShareAIWhatsapp} className="h-8 px-2.5 rounded-lg text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors flex items-center gap-1.5 cursor-pointer" title="WhatsApp ile Paylaş">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.625 1.451 5.403.002 9.803-4.389 9.805-9.788.002-2.615-1.012-5.074-2.859-6.925C16.37 2.04 13.916.996 11.998.996 6.592.996 2.192 5.389 2.19 10.789c-.001 1.5.49 2.961 1.422 4.5l-.995 3.636 3.73-.978zm13.14-5.38c-.3-.15-1.77-.874-2.045-.974-.275-.1-.475-.15-.675.15-.2.3-.77.974-.945 1.174-.175.2-.35.225-.65.075-.3-.15-1.265-.467-2.41-1.485-.89-.795-1.49-1.777-1.665-2.077-.175-.3-.02-.463.13-.613.135-.135.3-.35.45-.525.15-.175.2-.3.3-.5s.05-.375-.025-.525C10.74 8.796 10.14 7.32 9.89 6.72c-.244-.585-.491-.506-.675-.516-.175-.01-.375-.01-.575-.01-.2 0-.525.075-.8 1.075-.275 1.075-.77 2.455-.77 2.505 0 .05.075.325.275.6.2.275 1.34 2.046 3.245 2.87 1.57.68 2.185.748 2.97.63.485-.075 1.77-.724 2.02-1.399.25-.675.25-1.25.175-1.375-.075-.125-.275-.2-.575-.35z"/></svg> Paylaş
+                      </button>
+                    </div>
+                  )}
+
                   {!aiSimulating && (
-                    <button onClick={runAISimulation} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-extrabold text-sm rounded-xl shadow-md shadow-violet-200 transition-all flex items-center gap-2 hover:scale-105 active:scale-95">
+                    <button onClick={runAISimulation} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-extrabold text-sm rounded-xl shadow-md shadow-violet-200 transition-all flex items-center gap-2 hover:scale-105 active:scale-95 cursor-pointer">
                       <Sparkles size={15} /> {aiResults.length > 0 ? "Simülasyonu Yenile" : "Simülasyonu Başlat"}
                     </button>
                   )}
@@ -5424,7 +5604,7 @@ export default function OrderCockpit() {
                                       </p>
                                       <button
                                         onClick={() => handleDeleteResult(r.barkod)}
-                                        className="shrink-0 opacity-0 group-hover/row:opacity-100 p-0.5 text-stone-300 hover:text-red-500 transition-all cursor-pointer ml-auto"
+                                        className="shrink-0 p-0.5 text-red-500 hover:text-red-750 transition-all cursor-pointer ml-auto"
                                         title="Simülasyondan Kaldır"
                                       >
                                         <Trash2 size={11} />
@@ -5451,7 +5631,7 @@ export default function OrderCockpit() {
                                     {/* Barkod kopyalama */}
                                     <button
                                       onClick={() => navigator.clipboard?.writeText(r.barkod)}
-                                      className="shrink-0 opacity-0 group-hover/row:opacity-100 p-0.5 text-stone-300 hover:text-stone-600 transition-all cursor-pointer"
+                                      className="shrink-0 p-0.5 text-emerald-600 hover:text-emerald-800 transition-all cursor-pointer"
                                       title={`Barkodu kopyala: ${r.barkod}`}
                                     >
                                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -5482,7 +5662,7 @@ export default function OrderCockpit() {
                                     {/* Sil butonu */}
                                     <button
                                       onClick={() => handleDeleteResult(r.barkod)}
-                                      className="shrink-0 opacity-0 group-hover/row:opacity-100 p-0.5 text-stone-300 hover:text-red-500 transition-all cursor-pointer ml-auto"
+                                      className="shrink-0 p-0.5 text-red-500 hover:text-red-750 transition-all cursor-pointer ml-auto"
                                       title="Simülasyondan Kaldır"
                                     >
                                       <Trash2 size={11} />
