@@ -138,7 +138,19 @@ def profile_data(df):
     satis_listeleri = df[df['satis_tarihi'] >= son_90_thresh].groupby('barkod')['satis_adedi'].apply(list)
     meta['satis_adet_listesi'] = satis_listeleri
 
-    # --- 7. SONUÇ TABLOSUNU OLUŞTURMA (UI MAPPING) ---
+    # Son 30, 60 ve 365 günlük net satış kutu adetlerini hesapla (Vektörel)
+    df_full = df.copy()
+    thresh_30 = bugun - pd.Timedelta(days=30)
+    thresh_60 = bugun - pd.Timedelta(days=60)
+    thresh_365 = bugun - pd.Timedelta(days=365)
+    
+    df_full['satis_30_gun'] = np.where(df_full['satis_tarihi'] >= thresh_30, df_full['satis_adedi'], 0)
+    df_full['satis_60_gun'] = np.where(df_full['satis_tarihi'] >= thresh_60, df_full['satis_adedi'], 0)
+    df_full['satis_365_gun'] = np.where(df_full['satis_tarihi'] >= thresh_365, df_full['satis_adedi'], 0)
+    
+    sales_sums = df_full.groupby('barkod')[['satis_30_gun', 'satis_60_gun', 'satis_365_gun']].sum()
+    meta = meta.join(sales_sums)
+
     # --- 7. SONUÇ TABLOSUNU OLUŞTURMA (UI MAPPING & ZIRHLAMA) ---
     final_df = res.join(meta)
     final_df = final_df.reset_index()
@@ -167,6 +179,11 @@ def profile_data(df):
     # E. Liste Zırhlama (TypeError: object of type 'float' has no len() Hatası Çözümü)
     # Satış listesi NaN (float) olan yerleri boş liste [] ile değiştiriyoruz
     final_df['satis_adet_listesi'] = final_df['satis_adet_listesi'].apply(lambda x: x if isinstance(x, list) else [])
+
+    # F. Satış Toplamları Zırhlama
+    final_df['satis_30_gun'] = final_df['satis_30_gun'].fillna(0).astype(int)
+    final_df['satis_60_gun'] = final_df['satis_60_gun'].fillna(0).astype(int)
+    final_df['satis_365_gun'] = final_df['satis_365_gun'].fillna(0).astype(int)
 
     # F. Gelecek Modüller İçin Container Oluşturma
     final_df['tags'] = [[] for _ in range(len(final_df))]

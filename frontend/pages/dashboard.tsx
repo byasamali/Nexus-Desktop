@@ -4739,17 +4739,17 @@ export default function OrderCockpit() {
                           <div className="text-[9px] text-stone-400 font-black uppercase tracking-widest">Aylık Hız</div>
                           <div className="text-xs font-black text-blue-600 mt-0.5">{(dailySpeed * 30).toFixed(1)}/ay</div>
                         </div>
-                        <div className="bg-white border border-stone-200 rounded-xl p-2 text-center shadow-sm">
+                         <div className="bg-white border border-stone-200 rounded-xl p-2 text-center shadow-sm">
                           <div className="text-[9px] text-stone-400 font-black uppercase tracking-widest">Son 1 Ay</div>
-                          <div className="text-xs font-black text-stone-700 mt-0.5">{Math.round(dailySpeed * 30)} Adet</div>
+                          <div className="text-xs font-black text-stone-700 mt-0.5">{selectedAnalysis.v22 || 0} Adet</div>
                         </div>
                         <div className="bg-white border border-stone-200 rounded-xl p-2 text-center shadow-sm">
                           <div className="text-[9px] text-stone-400 font-black uppercase tracking-widest">Son 2 Ay</div>
-                          <div className="text-xs font-black text-stone-700 mt-0.5">{Math.round(dailySpeed * 60)} Adet</div>
+                          <div className="text-xs font-black text-stone-700 mt-0.5">{selectedAnalysis.v23 || 0} Adet</div>
                         </div>
                         <div className="bg-white border border-stone-200 rounded-xl p-2 text-center shadow-sm">
                           <div className="text-[9px] text-stone-400 font-black uppercase tracking-widest">Yıllık Çıkış</div>
-                          <div className="text-xs font-black text-stone-700 mt-0.5">{Math.round(dailySpeed * 365)} Adet</div>
+                          <div className="text-xs font-black text-stone-700 mt-0.5">{selectedAnalysis.v24 || 0} Adet</div>
                         </div>
                         <div className="bg-white border border-stone-200 rounded-xl p-2 text-center shadow-sm">
                           <div className="text-[9px] text-stone-400 font-black uppercase tracking-widest">Kalan Ömür</div>
@@ -6476,6 +6476,9 @@ function GrupDetailContent({ grup, rawGrup, getBreadcrumb, cart, updateCart, tog
   const totalD = det.reduce((a: number, u: any) => a + (u.v20 || 0), 0);
   const totalS = det.reduce((a: number, u: any) => a + (u.v4 || 0), 0);
   const totalV = det.reduce((a: number, u: any) => a + ((u.v4 || 0) * (u.v87 || u.v86 || 0)), 0);
+  const total30 = det.reduce((a: number, u: any) => a + (u.v22 || 0), 0);
+  const total60 = det.reduce((a: number, u: any) => a + (u.v23 || 0), 0);
+  const total365 = det.reduce((a: number, u: any) => a + (u.v24 || 0), 0);
   const omur = totalD > 0 && totalS > 0 ? Math.round(totalS / totalD) : null;
   const lider = det[0] || {};
   const kat = lider.kategori_id ? getBreadcrumb(lider.kategori_id) : '';
@@ -6491,9 +6494,9 @@ function GrupDetailContent({ grup, rawGrup, getBreadcrumb, cart, updateCart, tog
     { l: 'Ömür', v: omur ? `~${omur}g` : '—', c: !omur ? 'text-red-500' : omur < 30 ? 'text-amber-500' : 'text-emerald-600' },
     { l: 'Değer', v: totalV > 0 ? `₺${(totalV / 1000).toFixed(1)}K` : '—', c: 'text-stone-700' },
     { l: 'Öneri', v: grup.toplam_oneri || 0, c: 'text-emerald-600' },
-    { l: 'Grup 1 Ay', v: `${Math.round(totalD * 30)} Adet`, c: 'text-stone-600' },
-    { l: 'Grup 2 Ay', v: `${Math.round(totalD * 60)} Adet`, c: 'text-stone-600' },
-    { l: 'Grup Yıllık', v: `${Math.round(totalD * 365)} Adet`, c: 'text-stone-600' },
+    { l: 'Grup 1 Ay', v: `${total30} Adet`, c: 'text-stone-600' },
+    { l: 'Grup 2 Ay', v: `${total60} Adet`, c: 'text-stone-600' },
+    { l: 'Grup Yıllık', v: `${total365} Adet`, c: 'text-stone-600' },
   ];
 
   return (
