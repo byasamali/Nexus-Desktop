@@ -682,6 +682,7 @@ export default function OrderCockpit() {
   const [aiExcludeIlacDisi, setAiExcludeIlacDisi] = useState<boolean>(false);
   const [aiOnlySadece, setAiOnlySadece] = useState<'all' | 'ilac_disi'>('all');
   const [aiOnlyPharmaceuticalAndNoEquivalent, setAiOnlyPharmaceuticalAndNoEquivalent] = useState<boolean>(false);
+  const [aiSkipMfQuery, setAiSkipMfQuery] = useState<boolean>(false);
   const [esdegerItem, setEsdegerItem] = useState<any>(null);
   const [aiSimulationWarehouse, setAiSimulationWarehouse] = useState<'as' | 'gek'>('as');
 
@@ -1182,10 +1183,11 @@ export default function OrderCockpit() {
       const localLifetime = getGroupLifetimeLocal(g);
       if (localLifetime > aiTargetDays) return false;
 
-      // Sadece ilaç ve eşdeğersiz kontrolü
+      // Sadece eşdeğersiz ilaçlar kontrolü (kategori=ilaç VE eşdeğeri olmayan)
       if (aiOnlyPharmaceuticalAndNoEquivalent) {
         const isPharmaceutical = isDynamicPharmaceuticalCategory(g.kategori_id || 0);
-        const isEsdegersiz = g.detaylar.length === 1;
+        // eşdeğersiz: grubun original_count === 1 veya detaylar.length === 1
+        const isEsdegersiz = (g.original_count ?? g.detaylar.length) === 1;
         if (!isPharmaceutical || !isEsdegersiz) return false;
       }
 
@@ -1239,28 +1241,33 @@ export default function OrderCockpit() {
     const targetDomain = aiSimulationWarehouse === 'gek' ? 'gek.org.tr' : 'asecza.com.tr';
     const warehouseName = aiSimulationWarehouse === 'gek' ? 'Güney Ecza (GEK)' : 'AS Ecza';
 
-    for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
-      if (el && typeof el.executeJavaScript === 'function') {
-        try {
-          const url: string = await el.executeJavaScript('location.href');
-          if (url.includes(targetDomain) || (aiSimulationWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis'))) {
-            hiddenWebview = el;
-            break;
+    if (!aiSkipMfQuery) {
+      for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
+        if (el && typeof el.executeJavaScript === 'function') {
+          try {
+            const url: string = await el.executeJavaScript('location.href');
+            if (url.includes(targetDomain) || (aiSimulationWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis'))) {
+              hiddenWebview = el;
+              break;
+            }
+          } catch (e) {
+            // ignore
           }
-        } catch (e) {
-          // ignore
         }
       }
     }
 
     if (!hiddenWebview) {
-      alert(`${warehouseName} oturumu bulunamadı. Lütfen önce 'Depolar' sekmesinden ${warehouseName}'yı açıp giriş yapın.`);
-      return;
+      if (!aiSkipMfQuery) {
+        const proceed = window.confirm(`${warehouseName} oturumu bulunamadı.\n\nYalnızca önbellek verileriyle (MF sorgulaması yapılmadan) simülasyonu başlatmak ister misiniz?\n\nTamam → Önbellek ile devam et\nİptal → Simülasyonu durdur`);
+        if (!proceed) return;
+      }
+      // hiddenWebview null kalıyor; aşağıdaki döngü önbellek verisini kullanacak
     }
 
     // GEK webview hâlâ irj/portal/'daysa FrameWorkT1'e navigate et
     // (API istekleri Referer: FrameWorkT1/'dan gelmesi gerekiyor)
-    if (aiSimulationWarehouse === 'gek') {
+    if (aiSimulationWarehouse === 'gek' && hiddenWebview) {
       try {
         const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
         if (currentUrl.includes('irj/portal') && !currentUrl.includes('FrameWorkT1')) {
@@ -1320,7 +1327,7 @@ export default function OrderCockpit() {
 
     // Oturum kontrolü yap (Eğer cache'ten okunmayacak ürünler varsa kontrol önemli)
     const hasUncached = productsToQuery.some(p => !cache[p.barcode] || cache[p.barcode].date !== todayStr);
-    if (hasUncached) {
+    if (hasUncached && hiddenWebview) {
       try {
         const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
         const isLoginRequired = currentUrl.includes('/Login.aspx') || currentUrl.includes('login.aspx');
@@ -1385,6 +1392,25 @@ export default function OrderCockpit() {
         } else {
           // Önbellekte yoksa, canlı sorgu atıyoruz
           const barcodeJson = JSON.stringify(barcode);
+          if (!hiddenWebview) {
+            // Depo bağlantısı yok - önbellek verisi olmadığı için bu ürünü atlıyoruz (MF sorgulama atla modu)
+            results.push({
+              barkod: barcode,
+              ad: name,
+              stok: 0,
+              hiz: (group.detaylar?.[0] ? (Number(group.detaylar[0].v20) || 0) * 30 : 0),
+              ihtiyac: 0,
+              onerilen: 0,
+              baremler: [],
+              omur: 0,
+              secilenBarem: null,
+              depo: '',
+              isCached: false,
+              hata: 'Depo bağlantısı yok — önbellekte veri bulunamadı'
+            });
+            continue;
+          }
+
 
           if (aiSimulationWarehouse === 'gek') {
             // GEK Canlı Sorgu
@@ -2622,8 +2648,9 @@ export default function OrderCockpit() {
       }
 
       if (!hiddenWebview) {
-        alert(`${warehouseName} oturumu bulunamadı. Lütfen önce 'Depolar' sekmesinden ${warehouseName}'yı açıp giriş yapın.`);
-        return;
+        const proceed = window.confirm(`${warehouseName} oturumu bulunamadı.\n\nYalnızca önbellek verileriyle (MF sorgulaması yapılmadan) simülasyonu başlatmak ister misiniz?\n\nTamam → Önbellek ile devam et\nİptal → Simülasyonu durdur`);
+        if (!proceed) return;
+        // hiddenWebview null kalıyor; döngü önbellek verisini kullanacak
       }
 
       if (urgentWarehouse === 'gek') {
@@ -2649,7 +2676,7 @@ export default function OrderCockpit() {
       }
 
       const hasUncached = productsToQuery.some(p => !cache[p.barkod] || cache[p.barkod].date !== todayStr);
-      if (hasUncached) {
+      if (hasUncached && hiddenWebview) {
         try {
           const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
           const isLoginRequired = currentUrl.includes('/Login.aspx') || currentUrl.includes('login.aspx');
@@ -2706,6 +2733,30 @@ export default function OrderCockpit() {
               kod: cached.kod || ''
             };
           } else {
+            // Önbellekte yoksa, canlı sorgu atıyoruz
+            if (!hiddenWebview) {
+              // Depo bağlantısı yok - önbellekte veri bulunamadı
+              const daysLimitCount = urgentDaysLimit === 'aySonu' ? getDaysUntilMonthEnd() : urgentDaysLimit;
+              const itemStock = item.stok ?? 0;
+              const itemSpeed = item.hiz ?? 0;
+              results.push({
+                barkod: barcode,
+                ad: name,
+                stok: itemStock,
+                hiz: itemSpeed,
+                estOmur: item.estOmur ?? 0,
+                onerilen: 0,
+                baremler: [],
+                secilenBarem: null,
+                onerilenMf: null,
+                depocuFiyati: 0,
+                toplamTutar: 0,
+                depo: '',
+                isCached: false,
+                hata: 'Depo bağlantısı yok — önbellekte veri bulunamadı'
+              });
+              continue;
+            }
             const barcodeJson = JSON.stringify(barcode);
 
             if (urgentWarehouse === 'gek') {
@@ -5271,10 +5322,10 @@ export default function OrderCockpit() {
                                       >
                                         {r.ad}
                                       </span>
-                                      {/* Barkod kopyalama */}
+                                      {/* Barkod kopyalama - daima görünür, yeşil */}
                                       <button
                                         onClick={() => navigator.clipboard?.writeText(r.barkod)}
-                                        className="shrink-0 p-0.5 text-emerald-600 hover:text-emerald-800 transition-all cursor-pointer"
+                                        className="shrink-0 p-0.5 text-emerald-600 hover:text-emerald-800 transition-all cursor-pointer bg-emerald-50 rounded border border-emerald-200"
                                         title={`Barkodu kopyala: ${r.barkod}`}
                                       >
                                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -5297,10 +5348,10 @@ export default function OrderCockpit() {
                                           ⚖
                                         </button>
                                       )}
-                                      {/* Sil butonu */}
+                                      {/* Sil butonu - daima görünür, kırmızı */}
                                       <button
                                         onClick={() => handleDeleteUrgentResult(r.barkod)}
-                                        className="shrink-0 p-0.5 text-red-500 hover:text-red-750 transition-all cursor-pointer ml-auto"
+                                        className="shrink-0 p-0.5 text-red-600 hover:text-red-800 transition-all cursor-pointer bg-red-50 rounded border border-red-200 ml-auto"
                                         title="Simülasyondan Kaldır"
                                       >
                                         <Trash2 size={11} />
@@ -5426,9 +5477,9 @@ export default function OrderCockpit() {
                 <div>
                   <h3 className="font-black text-stone-900 text-base leading-tight flex items-center gap-2">
                     <Sparkles size={18} className="text-violet-600" />
-                    AI Akıllı Sipariş Simülasyonu (AS Ecza)
+                    AI Akıllı Sipariş Simülasyonu
                   </h3>
-                  <p className="text-xs text-stone-400 mt-1">AS Ecza canlı MF ve stok verileriyle optimizasyon yapar.</p>
+                  <p className="text-xs text-stone-400 mt-1">Seçili depo canlı MF ve stok verileriyle optimizasyon yapar.</p>
                 </div>
                 <button onClick={() => { if (!aiSimulating) setShowAIModal(false); }} disabled={aiSimulating}
                   className="h-9 w-9 flex items-center justify-center rounded-xl bg-stone-100 hover:bg-red-50 hover:text-red-600 transition-colors text-stone-500 shrink-0 disabled:opacity-50">
@@ -5527,16 +5578,18 @@ export default function OrderCockpit() {
 
                     <div className="w-px h-4 bg-stone-200 mx-1 shrink-0"></div>
 
-                    <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest shrink-0">Sadece:</span>
                     <button onClick={() => setAiOnlySadece(aiOnlySadece === 'ilac_disi' ? 'all' : 'ilac_disi')} className={cn("px-2 py-0.5 text-[10px] font-extrabold rounded-full border transition-colors", aiOnlySadece === 'ilac_disi' ? "bg-teal-600 border-teal-700 text-white" : "bg-white border-stone-200 text-stone-400 hover:border-teal-400 hover:text-teal-600")}>
                       İlaç Dışı
+                    </button>
+                    <button onClick={() => setAiOnlyPharmaceuticalAndNoEquivalent(!aiOnlyPharmaceuticalAndNoEquivalent)} className={cn("px-2 py-0.5 text-[10px] font-extrabold rounded-full border transition-colors", aiOnlyPharmaceuticalAndNoEquivalent ? "bg-violet-600 border-violet-700 text-white" : "bg-white border-stone-200 text-stone-400 hover:border-violet-400 hover:text-violet-600")}>
+                      Eşdeğersiz İlaçlar
                     </button>
 
                     <div className="w-px h-4 bg-stone-200 mx-1 shrink-0"></div>
 
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-violet-700 transition-colors">
-                      <input type="checkbox" checked={aiOnlyPharmaceuticalAndNoEquivalent} onChange={e => setAiOnlyPharmaceuticalAndNoEquivalent(e.target.checked)} className="w-3.5 h-3.5 rounded accent-violet-600" />
-                      Sadece İlaç &amp; Eşdeğersiz
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-violet-700 transition-colors" title="MF sorgulaması yapmadan yalnızca önbellek/yerel verilerle simülasyon yap">
+                      <input type="checkbox" checked={aiSkipMfQuery} onChange={e => setAiSkipMfQuery(e.target.checked)} className="w-3.5 h-3.5 rounded accent-orange-500" />
+                      MF Sorgulamayı atla
                     </label>
                   </div>
                 </div>
@@ -5604,7 +5657,7 @@ export default function OrderCockpit() {
                                       </p>
                                       <button
                                         onClick={() => handleDeleteResult(r.barkod)}
-                                        className="shrink-0 p-0.5 text-red-500 hover:text-red-750 transition-all cursor-pointer ml-auto"
+                                        className="shrink-0 p-0.5 text-red-600 hover:text-red-800 transition-all cursor-pointer ml-auto bg-red-50 rounded border border-red-200"
                                         title="Simülasyondan Kaldır"
                                       >
                                         <Trash2 size={11} />
@@ -5628,15 +5681,13 @@ export default function OrderCockpit() {
                                     >
                                       {r.ad}
                                     </p>
-                                    {/* Barkod kopyalama */}
                                     <button
                                       onClick={() => navigator.clipboard?.writeText(r.barkod)}
-                                      className="shrink-0 p-0.5 text-emerald-600 hover:text-emerald-800 transition-all cursor-pointer"
+                                      className="shrink-0 p-0.5 text-emerald-600 hover:text-emerald-800 transition-all cursor-pointer bg-emerald-50 rounded border border-emerald-200"
                                       title={`Barkodu kopyala: ${r.barkod}`}
                                     >
                                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                     </button>
-                                    {/* Neden? */}
                                     {r.whyData && (
                                       <button
                                         onClick={() => setWhyItem(r)}
@@ -5662,7 +5713,7 @@ export default function OrderCockpit() {
                                     {/* Sil butonu */}
                                     <button
                                       onClick={() => handleDeleteResult(r.barkod)}
-                                      className="shrink-0 p-0.5 text-red-500 hover:text-red-750 transition-all cursor-pointer ml-auto"
+                                      className="shrink-0 p-0.5 text-red-600 hover:text-red-800 transition-all cursor-pointer ml-auto bg-red-50 rounded border border-red-200"
                                       title="Simülasyondan Kaldır"
                                     >
                                       <Trash2 size={11} />
