@@ -10,10 +10,19 @@ const supabase = createClient(
 );
 
 const REGISTER_FIELDS = [
-  { name: 'fullName',      placeholder: 'Ad Soyad',      type: 'text',     icon: '👤' },
-  { name: 'pharmacyName', placeholder: 'Eczane Adı',     type: 'text',     icon: '🏥' },
-  { name: 'gln',          placeholder: 'GLN Numarası',   type: 'text',     icon: '🔢' },
-  { name: 'phone',        placeholder: 'Cep Telefonu',   type: 'tel',      icon: '📱' },
+  { name: 'eczaciAdi',    placeholder: 'Eczacı Adı Soyadı', type: 'text', icon: '👤' },
+  { name: 'pharmacyName', placeholder: 'Eczane Adı',        type: 'text', icon: '🏥' },
+  { name: 'phone',        placeholder: 'Telefon Numarası',  type: 'tel',  icon: '📱' },
+];
+
+const ECZA_PROGRAMLARI = [
+  'Belirtilmedi',
+  'Eczacıbaşı NET',
+  'Logo Eczane',
+  'Meddata',
+  'Farmakom',
+  'Proeba',
+  'Diğer',
 ];
 
 const BENEFITS = [
@@ -29,7 +38,7 @@ export default function RegisterLogin() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' | 'error'
   const [formData, setFormData] = useState({
-    fullName: '', pharmacyName: '', gln: '', phone: '', email: '', password: '',
+    eczaciAdi: '', pharmacyName: '', phone: '', eczaProgrami: 'Belirtilmedi', email: '', password: '',
   });
 
   useEffect(() => {
@@ -45,17 +54,30 @@ export default function RegisterLogin() {
     e.preventDefault();
     setLoading(true);
     try {
+      // IP adresini al
+      let ipAdresi = null;
+      try {
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const ipData = await ipRes.json();
+        ipAdresi = ipData.ip || null;
+      } catch { /* IP alınamazsa boş bırak */ }
+
       const { data, error } = await supabase.auth.signUp({ email: formData.email, password: formData.password });
       if (error) { setMessage({ text: error.message, type: 'error' }); return; }
       if (data.user) {
-        const { error: insertError } = await supabase.from('eczaneler').insert({
-          id: data.user.id, ad_soyad: formData.fullName, eczane_adi: formData.pharmacyName,
-          gln: formData.gln, email: formData.email, telefon: formData.phone,
+        const { error: insertError } = await supabase.from('nexus_lisanslari').insert({
+          id:            data.user.id,
+          eczane_adi:    formData.pharmacyName,
+          eczaci_adi:    formData.eczaciAdi,
+          telefon:       formData.phone,
+          ecza_programi: formData.eczaProgrami,
+          ip_adresi:     ipAdresi,
+          aktif:         true,
         });
         if (insertError) setMessage({ text: insertError.message, type: 'error' });
         else {
-          setMessage({ text: 'Kayıt başarılı! Admin onayı bekleniyor.', type: 'success' });
-          setFormData({ fullName: '', pharmacyName: '', gln: '', phone: '', email: '', password: '' });
+          setMessage({ text: '✓ Kayıt başarılı! Giriş yapabilirsiniz.', type: 'success' });
+          setFormData({ eczaciAdi: '', pharmacyName: '', phone: '', eczaProgrami: 'Belirtilmedi', email: '', password: '' });
         }
       }
     } catch { setMessage({ text: 'Bir hata oluştu', type: 'error' }); }
@@ -68,14 +90,27 @@ export default function RegisterLogin() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: formData.email, password: formData.password });
       if (error) { setMessage({ text: error.message, type: 'error' }); return; }
-      const { data: eczane } = await supabase.from('eczaneler').select('onaylandi_mi').eq('id', data.user.id).single();
-      if (!eczane?.onaylandi_mi) {
-        setMessage({ text: 'Hesabınız henüz admin tarafından onaylanmadı.', type: 'error' });
+
+      // Lisans kontrolü
+      const { data: lisans, error: lisansError } = await supabase
+        .from('nexus_lisanslari')
+        .select('aktif, eczane_adi')
+        .eq('id', data.user.id)
+        .single();
+
+      if (lisansError || !lisans) {
+        setMessage({ text: 'Lisans kaydınız bulunamadı. Lütfen tekrar kayıt olun.', type: 'error' });
         await supabase.auth.signOut();
-      } else {
-        setMessage({ text: 'Giriş başarılı! Yönlendiriliyorsunuz...', type: 'success' });
-        setTimeout(() => router.push('/dashboard'), 1000);
+        return;
       }
+      if (!lisans.aktif) {
+        setMessage({ text: 'Hesabınız askıya alınmıştır. Destek için iletişime geçin.', type: 'error' });
+        await supabase.auth.signOut();
+        return;
+      }
+
+      setMessage({ text: `Hoş geldiniz, ${lisans.eczane_adi}!`, type: 'success' });
+      setTimeout(() => router.push('/dashboard'), 1000);
     } catch { setMessage({ text: 'Bir hata oluştu', type: 'error' }); }
     finally { setLoading(false); }
   };
@@ -83,7 +118,7 @@ export default function RegisterLogin() {
   const switchMode = (login) => {
     setIsLogin(login);
     setMessage({ text: '', type: '' });
-    setFormData({ fullName: '', pharmacyName: '', gln: '', phone: '', email: '', password: '' });
+    setFormData({ eczaciAdi: '', pharmacyName: '', phone: '', eczaProgrami: 'Belirtilmedi', email: '', password: '' });
     router.replace(login ? '/register?mode=login' : '/register', undefined, { shallow: true });
   };
 
@@ -165,7 +200,7 @@ export default function RegisterLogin() {
             {/* Heading */}
             <div style={{ marginBottom: 28 }}>
               <h1 style={s.formTitle}>{isLogin ? 'Tekrar hoş geldiniz' : 'Hesap oluşturun'}</h1>
-              <p style={s.formSub}>{isLogin ? 'Devam etmek için giriş yapın' : 'Ücretsiz başlayın, admin onayı gerekir'}</p>
+              <p style={s.formSub}>{isLogin ? 'Devam etmek için giriş yapın' : 'Ücretsiz ve sınırsız — hemen başlayın'}</p>
             </div>
 
             {/* Form */}
@@ -195,6 +230,21 @@ export default function RegisterLogin() {
                         />
                       </div>
                     ))}
+                    {/* Eczane Programı Seçimi */}
+                    <div style={s.inputWrap}>
+                      <span style={s.inputIcon}>💊</span>
+                      <select
+                        name="eczaProgrami"
+                        value={formData.eczaProgrami}
+                        onChange={handleChange}
+                        disabled={loading}
+                        style={{ ...s.input, color: formData.eczaProgrami === 'Belirtilmedi' ? '#94a3b8' : '#0f172a' }}
+                      >
+                        {ECZA_PROGRAMLARI.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>

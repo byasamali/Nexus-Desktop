@@ -5,7 +5,7 @@ import {
   Globe, Plus, X, Eye, EyeOff, Trash2,
   Copy, Check, ExternalLink, RefreshCw,
   ShoppingCart, Store, Lock, User, Link2,
-  Search, ArrowLeft, ArrowRight, Truck
+  Search, ArrowLeft, ArrowRight, Truck, Settings
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -39,7 +39,7 @@ type GekProduct = {
   url: string;
 };
 
-type Depo = {
+export type Depo = {
   id: string; ad: string; url: string;
   kullanici: string; kod: string; sifre: string; renk: string;
   autoOpen?: boolean;
@@ -74,15 +74,17 @@ type ToastMsg = {
   type: 'success' | 'error' | 'loading';
 };
 
-interface DepolarProps {
+export interface DepolarProps {
   cart: Record<string, CartItem>;
   gln: string;
   onBack: () => void;
+  onGoToSettings?: () => void;
+  isActive?: boolean;
 }
 
 // ── Renk paleti ─────────────────────────────────────────────────────────────
 
-const DEPO_COLORS = [
+export const DEPO_COLORS = [
   { label: 'Teal',    value: '#14b8a6' },
   { label: 'Violet',  value: '#8b5cf6' },
   { label: 'Amber',   value: '#f59e0b' },
@@ -148,7 +150,7 @@ const GEK_TOKEN_SCRIPT = `
   })()
 `;
 
-const DEFAULT_DEPOLAR: Depo[] = [
+export const DEFAULT_DEPOLAR: Depo[] = [
   { id: 'selcuk',  ad: 'Selçuk Ecza', url: 'https://webdepo.selcukecza.com.tr/', kullanici: '', kod: '', sifre: '', renk: '#3b82f6', enabled: true },
   { id: 'as_ecza', ad: 'AS Ecza',     url: 'https://webdepo.asecza.com.tr/',     kullanici: '', kod: '', sifre: '', renk: '#14b8a6', enabled: true },
   { id: 'nevzat',  ad: 'Nevzat Ecza', url: 'http://webdepo.nevzatecza.com.tr/',  kullanici: '', kod: '', sifre: '', renk: '#f59e0b', enabled: true },
@@ -161,7 +163,7 @@ const DEFAULT_DEPOLAR: Depo[] = [
   { id: 'farmazon',ad: 'Farmazon',    url: 'https://eczaci.farmazon.com.tr/',    kullanici: '', kod: '', sifre: '', renk: '#581c87', enabled: true },
 ];
 
-function loadDeletedIds(): Set<string> {
+export function loadDeletedIds(): Set<string> {
   try {
     if (typeof window === 'undefined') return new Set();
     const r = localStorage.getItem(DELETED_KEY);
@@ -169,7 +171,7 @@ function loadDeletedIds(): Set<string> {
   } catch { return new Set(); }
 }
 
-function saveDeletedId(id: string) {
+export function saveDeletedId(id: string) {
   try {
     if (typeof window === 'undefined') return;
     const ids = loadDeletedIds();
@@ -178,7 +180,7 @@ function saveDeletedId(id: string) {
   } catch {}
 }
 
-function loadDepolar(): Depo[] {
+export function loadDepolar(): Depo[] {
   try {
     if (typeof window === 'undefined') return [...DEFAULT_DEPOLAR];
     const deleted = loadDeletedIds();
@@ -193,14 +195,14 @@ function loadDepolar(): Depo[] {
     return [...DEFAULT_DEPOLAR];
   }
 }
-function saveDepolar(d: Depo[]) {
+export function saveDepolar(d: Depo[]) {
   try {
     if (typeof window === 'undefined') return;
     localStorage.setItem(LOCAL_KEY, JSON.stringify(d));
   } catch {}
 }
-function randomId() { return Math.random().toString(36).slice(2, 10); }
-function ensureHttp(url: string) {
+export function randomId() { return Math.random().toString(36).slice(2, 10); }
+export function ensureHttp(url: string) {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   return 'https://' + url;
@@ -514,7 +516,7 @@ function MiniSepet({
 
 // ── Depo Ekleme / Düzenleme Modalı ──────────────────────────────────────────
 
-function DepoModal({ depo, onSave, onClose }: { depo?: Depo; onSave: (d: Depo) => void; onClose: () => void }) {
+export function DepoModal({ depo, onSave, onClose }: { depo?: Depo; onSave: (d: Depo) => void; onClose: () => void }) {
   const [form, setForm] = useState<Depo>(depo || {
     id: randomId(), ad: '', url: '', kullanici: '', kod: '', sifre: '', renk: DEPO_COLORS[0].value,
   });
@@ -1268,8 +1270,14 @@ function BrowserPanel({
 
 // ── Ana Bileşen ──────────────────────────────────────────────────────────────
 
-export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs, pendingSearch, onSearchProcessed }: any) {
+export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs, pendingSearch, onSearchProcessed, onGoToSettings, isActive }: any) {
   const [depolar, setDepolar] = useState<Depo[]>(loadDepolar);
+
+  useEffect(() => {
+    if (isActive) {
+      setDepolar(loadDepolar());
+    }
+  }, [isActive]);
   const [showModal, setShowModal] = useState(false);
   const [editingDepo, setEditingDepo] = useState<Depo | undefined>(undefined);
 
@@ -2652,37 +2660,30 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
         {/* Yatay Depolar Listesi */}
         <div className="flex-1 flex items-center gap-2 overflow-x-auto scrollbar-hide py-0.5">
-          {depolar.length === 0 ? (
-            <span className="text-[11px] text-stone-400 font-medium">Kayıtlı depo yok</span>
+          {depolar.filter(d => d.enabled !== false).length === 0 ? (
+            <span className="text-[11px] text-stone-400 font-medium">Aktif depo yok. Lütfen ayarlardan depoları aktifleştirin.</span>
           ) : (
-            depolar.map(depo => (
-              <div key={depo.id} className={cn("group relative flex items-center gap-2 px-3 py-1.5 bg-white border border-stone-200 rounded-xl hover:border-blue-400 hover:shadow-sm transition-all shrink-0",
-                depo.enabled === false && "opacity-50")}>
+            depolar.filter(d => d.enabled !== false).map(depo => (
+              <div key={depo.id} className="group relative flex items-center gap-2 px-3 py-1.5 bg-white border border-stone-200 rounded-xl hover:border-blue-400 hover:shadow-sm transition-all shrink-0">
                 <button
                   onClick={() => handleOpenDepo(depo)}
                   className="flex items-center gap-1.5 text-[11px] font-bold text-stone-700 hover:text-blue-600"
                 >
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: depo.enabled === false ? '#cbd5e1' : depo.renk }} />
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: depo.renk }} />
                   {depo.ad}
                 </button>
-                <div className="flex items-center gap-0.5 ml-1 border-l border-stone-100 pl-1">
-                  <button onClick={() => { setEditingDepo(depo); setShowModal(true); }} className="p-0.5 text-stone-400 hover:text-blue-600 rounded transition-colors" title="Düzenle">
-                    <User size={11} />
-                  </button>
-                  <button onClick={() => { if (confirm(`${depo.ad} deposunu silmek istediğinize emin misiniz?`)) handleDeleteDepo(depo.id); }} className="p-0.5 text-stone-400 hover:text-red-500 rounded transition-colors" title="Sil">
-                    <Trash2 size={11} />
-                  </button>
-                </div>
               </div>
             ))
           )}
 
-          <button
-            onClick={() => { setEditingDepo(undefined); setShowModal(true); }}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-dashed border-stone-300 hover:border-teal-500 text-[10px] font-bold text-stone-500 hover:text-teal-600 transition-all shrink-0"
-          >
-            <Plus size={12} /> Ekle
-          </button>
+          {onGoToSettings && (
+            <button
+              onClick={onGoToSettings}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-dashed border-stone-300 hover:border-blue-500 text-[10px] font-bold text-stone-500 hover:text-blue-600 transition-all shrink-0"
+            >
+              <Settings size={12} /> Depoları Yönet
+            </button>
+          )}
         </div>
 
         <div className="w-px h-5 bg-stone-200 shrink-0" />

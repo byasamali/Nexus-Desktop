@@ -1,4 +1,4 @@
-; Inno Setup Script for Nexus Desktop
+; Inno Setup Script for Nexus Desktop (Electron Edition)
 ; Download Inno Setup from: https://jrsoftware.org/isdl.php
 
 [Setup]
@@ -6,7 +6,7 @@ AppName=Nexus Desktop
 AppVersion=1.0.0
 DefaultDirName={localappdata}\NexusDesktop
 DefaultGroupName=Nexus Desktop
-UninstallDisplayIcon={app}\Nexus-Desktop.exe
+UninstallDisplayIcon={app}\nexus-desktop.exe
 Compression=lzma2
 SolidCompression=yes
 OutputDir=build\installer
@@ -16,22 +16,18 @@ ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=lowest
 
 [Files]
-; Main Executable
-Source: "build\bin\Nexus-Desktop.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Main Electron application files (from npm run pack)
+Source: "dist\win-unpacked\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Python Processor
-Source: "build\bin\processor.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Next.js frontend files
+Source: "frontend\out\*"; DestDir: "{app}\frontend\out"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Database Folder (master_db.sqlite)
-Source: "build\bin\database\master_db.sqlite"; DestDir: "{app}\database"; Flags: ignoreversion
-
-; Configs Folder
-Source: "build\bin\configs\db_connections.json"; DestDir: "{app}\configs"; Flags: ignoreversion
-Source: "build\bin\configs\sql_queries.json"; DestDir: "{app}\configs"; Flags: ignoreversion
+; Python tools and scripts (Excluding virtual environments, caches and generated database results)
+Source: "python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "python\tenants\*,python\.venv\*,python\__pycache__\*,python\build\*,python\dist\*"
 
 [Icons]
-Name: "{group}\Nexus Desktop"; Filename: "{app}\Nexus-Desktop.exe"
-Name: "{autodesktop}\Nexus Desktop"; Filename: "{app}\Nexus-Desktop.exe"
+Name: "{group}\Nexus Desktop"; Filename: "{app}\nexus-desktop.exe"
+Name: "{autodesktop}\Nexus Desktop"; Filename: "{app}\nexus-desktop.exe"
 
 [Run]
-Filename: "{app}\Nexus-Desktop.exe"; Description: "Launch Nexus Desktop"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\nexus-desktop.exe"; Description: "Launch Nexus Desktop"; Flags: postinstall nowait skipifsilent

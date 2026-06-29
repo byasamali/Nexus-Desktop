@@ -14,5 +14,15 @@
   "devDependencies": {
     "electron": "^28.2.0",
     "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.farmteknoloji.nexus",
+    "productName": "Nexus Desktop",
+    "files": [
+      "main.js",
+      "preload.js",
+      "webview-preload.js",
+      "package.json"
+    ]
   }
 }
