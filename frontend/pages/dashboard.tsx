@@ -4538,7 +4538,7 @@ export default function OrderCockpit() {
               <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="max-w-7xl mx-auto">
                 {activeTab === 'rapor' && <GeneralReports data={data} />}
                 {activeTab === 'tahmin' && <PredictionsReport data={data} />}
-                {activeTab === 'yok_listesi' && (
+                 {activeTab === 'yok_listesi' && (
                   <YokListesi 
                     data={data} 
                     gln={data?.gln || 'local'} 
@@ -4550,6 +4550,7 @@ export default function OrderCockpit() {
                       setPendingDepoSearch({ barcode, timestamp: Date.now() });
                       setActiveTab('depolar');
                     }}
+                    onOpenProductAnalysis={handleOpenProductAnalysis}
                   />
                 )}
                 {activeTab === 'gozden_kacanlar' && (
@@ -4560,20 +4561,21 @@ export default function OrderCockpit() {
                     updateCart={updateCart}
                     toggleCartItem={toggleCartItem}
                     setCart={setCart}
+                    onOpenProductAnalysis={handleOpenProductAnalysis}
                   />
                 )}
                 {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} data={data} />}
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}
-                {activeTab === 'os' && <DeadStockReport data={data?.olu_stok_listesi || []} gln={data?.gln || 'local'} addToReturns={addToReturnsList} />}
-                {activeTab === 'mr' && <ExpiryReport data={data?.miad_risk_listesi || []} addToReturns={addToReturnsList} />}
-                {activeTab === 'st' && <OutOfStockReport data={data?.stok_sifir_listesi || []} />}
+                {activeTab === 'os' && <DeadStockReport data={data?.olu_stok_listesi || []} gln={data?.gln || 'local'} addToReturns={addToReturnsList} onOpenProductAnalysis={handleOpenProductAnalysis} />}
+                {activeTab === 'mr' && <ExpiryReport data={data?.miad_risk_listesi || []} addToReturns={addToReturnsList} onOpenProductAnalysis={handleOpenProductAnalysis} />}
+                {activeTab === 'st' && <OutOfStockReport data={data?.stok_sifir_listesi || []} onOpenProductAnalysis={handleOpenProductAnalysis} />}
                 {activeTab === 'ayarlar' && <AyarlarPage supabase={supabase} />}
                 {activeTab === 'kategori_yonetimi' && <CategoryManager />}
                 {activeTab === 'veritabani_araci' && <DatabaseManager />}
-                {activeTab === 'iadeler' && <IadelerPage gln={data?.gln || 'local'} />}
-                {activeTab === 'psf_kontrol' && <PsfKontrolPage data={data} gln={data?.gln || 'local'} webviewRefs={sharedWebviewRefs} />}
+                {activeTab === 'iadeler' && <IadelerPage gln={data?.gln || 'local'} data={data} onOpenProductAnalysis={handleOpenProductAnalysis} />}
+                {activeTab === 'psf_kontrol' && <PsfKontrolPage data={data} gln={data?.gln || 'local'} webviewRefs={sharedWebviewRefs} onOpenProductAnalysis={handleOpenProductAnalysis} />}
                 {/* {activeTab === 'kardes' && <KardesEczanePage />} */}
                 {['nb', 'para'].includes(activeTab) && (
                   <DataTable data={activeTab === 'nb' ? (data?.nobet_listesi || []) : (data?.nakit_optimizasyon || [])} type={activeTab} gln={data?.gln || 'local'} />
@@ -8005,6 +8007,7 @@ function DataTable({ data, type, gln }: { data: any[], type: string, gln: string
               <tr>
                 {[
                   ['Ürün Adı', 'ad'],
+                  ['Mevcut Stok', 'stok'],
                   ['Hedef', 'hedef'],
                   ['Eksik', 'ihtiyac']
                 ].map(([h, field]) => (
@@ -8022,12 +8025,18 @@ function DataTable({ data, type, gln }: { data: any[], type: string, gln: string
                 <tr key={i} className="hover:bg-violet-50/20 transition-colors">
                   <td className="px-4 py-3 font-bold text-stone-700 text-xs">
                     <div className="flex items-center gap-2">
-                      <span>{item.ad || item.urun_adi || '—'}</span>
+                      <span 
+                        onClick={() => item.barkod && handleOpenProductAnalysis(item.barkod, item.ad || item.urun_adi)}
+                        className="cursor-pointer hover:underline text-teal-650 hover:text-teal-800"
+                        title="İlaç detaylarını görmek için tıklayın"
+                      >
+                        {item.ad || item.urun_adi || '—'}
+                      </span>
                       {item.barkod && (
                         <>
                           <button onClick={() => copyBarkod(item.barkod)}
                             title={`${item.barkod} kopyala`}
-                            className="p-1 hover:text-teal-600 hover:border-teal-200 bg-stone-50 border border-stone-200 rounded transition-colors text-stone-400">
+                            className="p-1 hover:text-teal-650 hover:border-teal-200 bg-stone-50 border border-stone-200 rounded transition-colors text-stone-450">
                             {copiedBarkod === item.barkod ? <Check size={10} className="text-teal-500" /> : <Copy size={10} />}
                           </button>
                           <button onClick={() => setReasonItem(item)}
@@ -8039,8 +8048,9 @@ function DataTable({ data, type, gln }: { data: any[], type: string, gln: string
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-stone-500 text-xs">{item.hedef}</td>
-                  <td className="px-4 py-3 text-red-600 font-black text-xs">+{item.ihtiyac}</td>
+                  <td className="px-4 py-3 text-stone-550 font-bold font-mono text-xs">{item.stok ?? 0}</td>
+                  <td className="px-4 py-3 text-stone-500 text-xs font-mono">{item.hedef}</td>
+                  <td className="px-4 py-3 text-red-600 font-black text-xs font-mono">+{item.ihtiyac}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-0.5 border border-stone-200 rounded-lg overflow-hidden bg-white w-fit">
                       <button onClick={() => setCartQty(prev => ({ ...prev, [item.barkod]: Math.max(1, (prev[item.barkod] ?? (item.ihtiyac || 1)) - 1) }))}
@@ -8095,7 +8105,13 @@ function DataTable({ data, type, gln }: { data: any[], type: string, gln: string
       <div className="md:hidden divide-y divide-stone-100 bg-stone-50/20">
         {sortedData.map((item: any, i: number) => (
           <div key={i} className="p-4">
-            <p className="font-bold text-stone-800 text-[13px] mb-3 leading-snug">{item.ad || item.urun_adi || "Bilinmeyen Ürün"}</p>
+            <p 
+              onClick={() => item.barkod && handleOpenProductAnalysis(item.barkod, item.ad || item.urun_adi)}
+              className="font-bold text-teal-655 hover:underline hover:text-teal-800 cursor-pointer text-[13px] mb-3 leading-snug"
+              title="İlaç detaylarını görmek için tıklayın"
+            >
+              {item.ad || item.urun_adi || "Bilinmeyen Ürün"}
+            </p>
             {type === 'para' && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 justify-between bg-white px-4 py-3 rounded-xl border border-stone-200/60 shadow-sm">
@@ -8159,7 +8175,13 @@ function DataTable({ data, type, gln }: { data: any[], type: string, gln: string
               <tr key={i} className="hover:bg-stone-50/60 transition-colors">
                 <td className="px-6 py-4 font-bold text-stone-700 text-xs">
                   <div className="flex items-center gap-2">
-                    <span>{item.ad || item.urun_adi || "Bilinmeyen Ürün"}</span>
+                    <span 
+                      onClick={() => item.barkod && handleOpenProductAnalysis(item.barkod, item.ad || item.urun_adi)}
+                      className="cursor-pointer hover:underline text-teal-655 hover:text-teal-800"
+                      title="İlaç detaylarını görmek için tıklayın"
+                    >
+                      {item.ad || item.urun_adi || "Bilinmeyen Ürün"}
+                    </span>
                     {item.barkod && (
                       <button onClick={() => copyBarkod(item.barkod)}
                         title={`${item.barkod} kopyala`}

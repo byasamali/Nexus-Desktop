@@ -12,7 +12,7 @@ function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
-export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggleCartItem, setCart }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any }) {
+export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggleCartItem, setCart, onOpenProductAnalysis }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any; onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void }) {
     const [quantities, setQuantities] = useState<Record<string, number>>({});
     const [sortField, setSortField] = useState<string>('daysInactive');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -152,7 +152,13 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                                     <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
                                                         <Package size={16} />
                                                     </div>
-                                                    <p className="text-xs font-bold text-slate-800 truncate max-w-[280px]" title={item.name}>{item.name}</p>
+                                                    <p 
+                                                        onClick={() => onOpenProductAnalysis && onOpenProductAnalysis(item.barcode, item.name)}
+                                                        className="text-xs font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer truncate max-w-[280px]" 
+                                                        title="İlaç detaylarını görmek için tıklayın"
+                                                    >
+                                                        {item.name}
+                                                    </p>
                                                 </div>
                                             </td>
                                             <td className="px-3 py-1 text-xs font-mono text-slate-500">

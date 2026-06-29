@@ -4,9 +4,18 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw, Download, Trash2, ShieldAlert, Check, Copy } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-export default function IadelerPage({ gln }: { gln: string }) {
+export default function IadelerPage({ gln, data, onOpenProductAnalysis }: { gln: string; data?: any; onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void }) {
     const [returnsList, setReturnsList] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
+
+    const getStockForBarcode = (barcode: string) => {
+        if (!data?.gruplar) return 0;
+        for (const g of data.gruplar) {
+            const u = g.detaylar?.find((u: any) => u.v1 === barcode);
+            if (u) return Number(u.v4) || 0;
+        }
+        return 0;
+    };
     const [successMsg, setSuccessMsg] = useState<string | null>(null);
     const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -242,6 +251,7 @@ export default function IadelerPage({ gln }: { gln: string }) {
                             <thead className="bg-slate-50 border-b border-slate-100">
                                 <tr>
                                     <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ürün Adı</th>
+                                    <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] w-36 text-center">Güncel Stok</th>
                                     <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] w-48">İade Adedi</th>
                                     <th className="px-3 py-1.5 text-right font-black text-slate-400 uppercase tracking-widest text-[10px] w-24">Sil</th>
                                 </tr>
@@ -251,7 +261,13 @@ export default function IadelerPage({ gln }: { gln: string }) {
                                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                                         <td className="px-3 py-0.5 text-xs">
                                             <div className="flex items-center gap-2.5">
-                                                <span className="font-bold text-slate-750">{item.ad}</span>
+                                                <span 
+                                                    onClick={() => onOpenProductAnalysis && onOpenProductAnalysis(item.barkod, item.ad)}
+                                                    className="font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer"
+                                                    title="İlaç detaylarını görmek için tıklayın"
+                                                >
+                                                    {item.ad}
+                                                </span>
                                                 <button
                                                     onClick={() => copyFn(item.barkod)}
                                                     className={`p-1 rounded hover:bg-stone-105 transition-all flex items-center gap-1.5 text-[10px] font-mono border ${
@@ -267,6 +283,9 @@ export default function IadelerPage({ gln }: { gln: string }) {
                                                     <span>{item.barkod}</span>
                                                 </button>
                                             </div>
+                                        </td>
+                                        <td className="px-3 py-0.5 text-center font-mono font-bold text-slate-500 text-xs">
+                                            {getStockForBarcode(item.barkod)}
                                         </td>
                                         <td className="px-3 py-0.5">
                                             <div className="flex items-center gap-1 border border-slate-200 rounded-xl overflow-hidden bg-white w-fit">

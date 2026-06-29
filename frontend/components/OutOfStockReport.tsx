@@ -10,7 +10,7 @@ interface OutOfStockItem {
   aylik_hiz?: number;
 }
 
-export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
+export default function OutOfStockReport({ data, onOpenProductAnalysis }: { data: OutOfStockItem[]; onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void }) {
   const [search, setSearch] = useState("");
   const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
   const [cartQty, setCartQty] = useState<Record<string, number>>({});
@@ -227,7 +227,13 @@ export default function OutOfStockReport({ data }: { data: OutOfStockItem[] }) {
                 <tr key={idx} className="hover:bg-rose-50/30 transition-colors group">
                   <td className="px-3 py-1">
                     <div className="flex items-center gap-2.5">
-                      <span className="font-bold text-slate-700 group-hover:text-rose-600 transition-colors">{item.ad}</span>
+                      <span 
+                        onClick={() => onOpenProductAnalysis && onOpenProductAnalysis(item.barkod, item.ad)}
+                        className="font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer transition-colors"
+                        title="İlaç detaylarını görmek için tıklayın"
+                      >
+                        {item.ad}
+                      </span>
                       <button
                         onClick={() => copyBarkod(item.barkod)}
                         className={`p-1 rounded hover:bg-stone-105 transition-all flex items-center gap-1.5 text-[10px] font-mono border ${

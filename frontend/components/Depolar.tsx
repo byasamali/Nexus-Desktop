@@ -2672,6 +2672,55 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: depo.renk }} />
                   {depo.ad}
                 </button>
+
+                {/* Hover Credentials Tooltip */}
+                <div className="absolute top-full left-0 mt-1 hidden group-hover:flex flex-col bg-stone-900 text-white rounded-xl shadow-lg border border-stone-800 p-2.5 z-[999] min-w-[160px] text-[10px] space-y-1">
+                  <div className="flex items-center justify-between gap-2 border-b border-stone-800 pb-1 mb-1">
+                    <span className="text-stone-400 font-bold uppercase text-[9px]">{depo.ad}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-stone-500 font-medium shrink-0">Kullanıcı:</span>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard?.writeText(depo.kullanici || '');
+                        alert(`${depo.ad} Kullanıcı Adı kopyalandı!`);
+                      }}
+                      className="font-mono font-bold text-stone-300 hover:text-teal-400 truncate hover:underline text-right"
+                      title="Kopyalamak için tıklayın"
+                    >
+                      {depo.kullanici || '—'}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-stone-500 font-medium shrink-0">Kod:</span>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard?.writeText(depo.kod || '');
+                        alert(`${depo.ad} Depo Kodu kopyalandı!`);
+                      }}
+                      className="font-mono font-bold text-stone-300 hover:text-teal-400 truncate hover:underline text-right"
+                      title="Kopyalamak için tıklayın"
+                    >
+                      {depo.kod || '—'}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-stone-500 font-medium shrink-0">Şifre:</span>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard?.writeText(depo.sifre || '');
+                        alert(`${depo.ad} Şifre kopyalandı!`);
+                      }}
+                      className="font-mono font-bold text-stone-300 hover:text-teal-400 truncate hover:underline text-right"
+                      title="Kopyalamak için tıklayın"
+                    >
+                      {depo.sifre || '—'}
+                    </button>
+                  </div>
+                </div>
               </div>
             ))
           )}

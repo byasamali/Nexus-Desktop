@@ -8,9 +8,10 @@ interface DeadStockReportProps {
     data: any[];
     gln: string;
     addToReturns?: (barkod: string, ad: string, adet: number) => Promise<boolean>;
+    onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void;
 }
 
-export default function DeadStockReport({ data, gln, addToReturns }: DeadStockReportProps) {
+export default function DeadStockReport({ data, gln, addToReturns, onOpenProductAnalysis }: DeadStockReportProps) {
     const [search, setSearch] = useState("");
     const [copiedBarkod, setCopiedBarkod] = useState<string | null>(null);
     const [sortField, setSortField] = useState<string>('son_satis');
@@ -235,7 +236,13 @@ export default function DeadStockReport({ data, gln, addToReturns }: DeadStockRe
                                 <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
                                     <td className="px-3 py-1">
                                         <div className="flex items-center gap-2.5">
-                                            <span className="font-bold text-slate-700 group-hover:text-blue-650 transition-colors">{item.ad}</span>
+                                            <span 
+                                                onClick={() => onOpenProductAnalysis && onOpenProductAnalysis(item.barkod, item.ad)}
+                                                className="font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer transition-colors"
+                                                title="İlaç detaylarını görmek için tıklayın"
+                                            >
+                                                {item.ad}
+                                            </span>
                                             <button
                                                 onClick={() => copyBarkod(item.barkod)}
                                                 className={`p-1 rounded hover:bg-stone-105 transition-all flex items-center gap-1.5 text-[10px] font-mono border ${

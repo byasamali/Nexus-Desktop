@@ -26,9 +26,10 @@ function parseMiadStr(raw: string | undefined | null): string {
 interface ExpiryReportProps {
     data: any[];
     addToReturns?: (barkod: string, ad: string, adet: number) => Promise<boolean>;
+    onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void;
 }
 
-export default function ExpiryReport({ data, addToReturns }: ExpiryReportProps) {
+export default function ExpiryReport({ data, addToReturns, onOpenProductAnalysis }: ExpiryReportProps) {
     const [search, setSearch] = useState("");
     const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
     const [sortField, setSortField] = useState<string | null>(null);
@@ -241,7 +242,13 @@ export default function ExpiryReport({ data, addToReturns }: ExpiryReportProps) 
                                 <tr key={idx} className="hover:bg-orange-50/10 transition-colors group">
                                     <td className="px-3 py-1">
                                         <div>
-                                            <div className="font-bold text-slate-700">{item.ad}</div>
+                                            <div 
+                                                onClick={() => onOpenProductAnalysis && onOpenProductAnalysis(item.barkod, item.ad)}
+                                                className="font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer"
+                                                title="İlaç detaylarını görmek için tıklayın"
+                                            >
+                                                {item.ad}
+                                            </div>
                                             <div className="text-[10px] font-mono text-slate-400 mt-0.5">{item.barkod}</div>
                                         </div>
                                     </td>

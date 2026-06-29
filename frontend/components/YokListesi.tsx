@@ -21,12 +21,14 @@ interface OutOfStockItem {
     notes?: string;
 }
 
-export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCartItem, setCart, onSearchInWarehouse }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any; onSearchInWarehouse?: (barcode: string) => void }) {
+export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCartItem, setCart, onSearchInWarehouse, onOpenProductAnalysis }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any; onSearchInWarehouse?: (barcode: string) => void; onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void }) {
     const [items, setItems] = useState<OutOfStockItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [manualBarcode, setManualBarcode] = useState('');
+    const [manualName, setManualName] = useState('');
 
     const copyFn = async (barcode: string) => {
         try {
@@ -300,9 +302,73 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
 
             <div className="w-full animate-fadeIn">
                 <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[500px]">
-                    <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
-                        <h3 className="font-black text-slate-800 text-lg tracking-tight">Yok Listesindeki İlaçlar</h3>
-                        <span className="text-xs font-bold text-slate-400">{items.length} Kalem Listeleniyor</span>
+                    <div className="px-6 py-5 border-b border-slate-50 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                        <div>
+                            <h3 className="font-black text-slate-800 text-lg tracking-tight">Yok Listesindeki İlaçlar</h3>
+                            <span className="text-xs font-bold text-slate-400">{items.length} Kalem Listeleniyor</span>
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-3">
+                            {/* Veritabanında Ara */}
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    placeholder="Envanterde ara ve ekle..."
+                                    value={searchQuery}
+                                    onChange={e => setSearchQuery(e.target.value)}
+                                    className="pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-150 focus:border-red-500 outline-none text-xs transition-all font-medium text-slate-800 w-[190px]"
+                                />
+                                <Search className="absolute left-2.5 top-2.5 text-slate-400" size={13} />
+                                
+                                {/* Search Results Dropdown */}
+                                {searchResults.length > 0 && (
+                                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 overflow-hidden divide-y divide-slate-50 max-h-[220px] overflow-y-auto custom-scrollbar">
+                                        {searchResults.map((item, idx) => (
+                                            <div
+                                                key={idx}
+                                                onClick={() => addItem(item)}
+                                                className="px-3 py-2 text-[10px] font-bold text-slate-700 hover:bg-red-50/50 cursor-pointer flex items-center justify-between gap-2"
+                                            >
+                                                <span className="truncate">{item.name}</span>
+                                                <span className="font-mono text-slate-450 shrink-0">{item.barcode}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Manuel Giriş */}
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Manuel Barkod..."
+                                    value={manualBarcode}
+                                    onChange={e => setManualBarcode(e.target.value)}
+                                    className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none text-xs focus:border-red-500 w-[110px]"
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="Manuel İlaç Adı..."
+                                    value={manualName}
+                                    onChange={e => setManualName(e.target.value)}
+                                    className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none text-xs focus:border-red-500 w-[150px]"
+                                />
+                                <button
+                                    onClick={() => {
+                                        if (!manualBarcode.trim() || !manualName.trim()) {
+                                            alert("Lütfen hem barkod hem de ilaç adı giriniz.");
+                                            return;
+                                        }
+                                        addItem({ barcode: manualBarcode.trim(), name: manualName.trim(), depo: 'MANUEL' });
+                                        setManualBarcode('');
+                                        setManualName('');
+                                    }}
+                                    className="flex items-center justify-center gap-1.5 px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-xs shadow-sm transition-all"
+                                >
+                                    <Plus size={12} /> Ekle
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
                     {items.length > 0 ? (
@@ -329,7 +395,13 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
                                                     </div>
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="text-xs font-bold text-slate-800 truncate">{item.name}</span>
+                                                            <span 
+                                                                onClick={() => onOpenProductAnalysis && onOpenProductAnalysis(item.barcode, item.name)}
+                                                                className="text-xs font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer truncate"
+                                                                title="İlaç detaylarını görmek için tıklayın"
+                                                            >
+                                                                {item.name}
+                                                            </span>
                                                             <button
                                                                 onClick={() => copyFn(item.barcode)}
                                                                 className={cn(
