@@ -238,8 +238,11 @@ ipcMain.handle('wails:GetWebviewPreloadPath', async () => {
 ipcMain.handle('wails:RunCategoryAction', async (event, action, paramsJSON) => {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(pythonDir, 'manage_categories.py');
+    const exePath = path.join(pythonDir, 'dist', 'manage_categories.exe');
     let pythonProcess;
-    if (fs.existsSync(pythonVenvPython)) {
+    if (fs.existsSync(exePath)) {
+      pythonProcess = spawn(exePath, [action, paramsJSON]);
+    } else if (fs.existsSync(pythonVenvPython)) {
       pythonProcess = spawn(pythonVenvPython, [scriptPath, action, paramsJSON]);
     } else {
       pythonProcess = spawn('python', [scriptPath, action, paramsJSON]);
@@ -275,9 +278,12 @@ ipcMain.handle('wails:TriggerSyncAndAnalysis', async (event, gln, fullSync) => {
     mainWindow.webContents.send('wails-event', 'sync:status', 'connecting');
 
     const scriptPath = path.join(pythonDir, 'sync_and_run.py');
+    const exePath = path.join(pythonDir, 'dist', 'sync_and_run.exe');
     
     let pythonProcess;
-    if (fs.existsSync(pythonVenvPython)) {
+    if (fs.existsSync(exePath)) {
+      pythonProcess = spawn(exePath, [gln, fullSync ? '--full' : '']);
+    } else if (fs.existsSync(pythonVenvPython)) {
       pythonProcess = spawn(pythonVenvPython, [scriptPath, gln, fullSync ? '--full' : '']);
     } else {
       pythonProcess = spawn('python', [scriptPath, gln, fullSync ? '--full' : '']);
@@ -337,8 +343,11 @@ ipcMain.handle('wails:TriggerSyncAndAnalysis', async (event, gln, fullSync) => {
 ipcMain.handle('wails:RunDbQuery', async (event, query, paramsJSON) => {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(pythonDir, 'db_tool.py');
+    const exePath = path.join(pythonDir, 'dist', 'db_tool.exe');
     let pythonProcess;
-    if (fs.existsSync(pythonVenvPython)) {
+    if (fs.existsSync(exePath)) {
+      pythonProcess = spawn(exePath, ['execute', query, paramsJSON || '[]']);
+    } else if (fs.existsSync(pythonVenvPython)) {
       pythonProcess = spawn(pythonVenvPython, [scriptPath, 'execute', query, paramsJSON || '[]']);
     } else {
       pythonProcess = spawn('python', [scriptPath, 'execute', query, paramsJSON || '[]']);

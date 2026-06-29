@@ -33,7 +33,10 @@ def main():
     gln = sys.argv[1]
     full_sync = '--full' in sys.argv
     
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(os.path.dirname(sys.executable))
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(base_dir)
     
     settings_path = os.path.join(base_dir, 'tenants', 'settings.json')

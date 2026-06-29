@@ -43,3 +43,5 @@ Thumbs.db
 # Build and Temp folders
 bin/
 build/
+dist/
+

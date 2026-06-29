@@ -52,7 +52,7 @@ class NexusProcessor:
         self.gln = gln
         import sys
         if getattr(sys, 'frozen', False):
-            self.base_dir = os.path.dirname(sys.executable)
+            self.base_dir = os.path.dirname(os.path.dirname(sys.executable))
         else:
             self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.tenant_dir = os.path.join(self.base_dir, "tenants", gln)

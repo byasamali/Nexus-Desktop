@@ -4,7 +4,10 @@ import sqlite3
 import json
 
 def get_db_connection():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(os.path.dirname(sys.executable))
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
     db_path = os.path.join(base_dir, "database", "master_db.sqlite")
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found at {db_path}")
