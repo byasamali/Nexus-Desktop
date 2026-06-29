@@ -248,7 +248,7 @@ def main():
                 pass
                 
         # Run processor analysis
-        result = processor.run_full_analysis()
+        result = processor.run_full_analysis(fast=not full_sync)
         if "error" in result:
             print(f"Analysis failed with error: {result['error']}", file=sys.stderr)
             sys.exit(2)

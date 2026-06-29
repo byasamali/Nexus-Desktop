@@ -255,7 +255,7 @@ class NexusProcessor:
 
 
 
-    def run_full_analysis(self):
+    def run_full_analysis(self, fast=False):
 
 
          # --- SENKRONİZASYONU TETİKLE ---
@@ -272,7 +272,7 @@ class NexusProcessor:
             print(f"⚠️ {self.gln} onaylanmamış! Analiz durduruldu.")
             return {"error": "Eczane henüz onaylanmamış."}
 
-        print(f"🧠 {self.gln} (UUID: {self.eczane_uuid}) İÇİN ANALİZ BAŞLATILIYOR...")
+        print(f"🧠 {self.gln} (UUID: {self.eczane_uuid}) İÇİN ANALİZ BAŞLATILIYOR (Fast Mode: {fast})...")
 
 
        
@@ -280,6 +280,18 @@ class NexusProcessor:
 
         if not os.path.exists(self.parquet_path):
             return {"error": "Ham veri henüz yüklenmemiş."}
+
+        cache_data = {}
+        if fast:
+            cache_path = os.path.join(self.tenant_dir, "analysis_cache.json")
+            if os.path.exists(cache_path):
+                try:
+                    import json
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    print("[Python] Loaded previous analysis_cache.json for fast mode fallback.")
+                except Exception as cache_err:
+                    print(f"Warning: could not read cache file for fast mode: {cache_err}")
 
         # --- 1. HAM VERİ OKUMA VE ÖN TEMİZLİK ---
         print("⏳ Ham veri okunuyor...")
@@ -295,9 +307,10 @@ class NexusProcessor:
         if 'barkod' in df_raw.columns:
             df_raw['barkod'] = df_raw['barkod'].astype(str).str.split('.').str[0].str.strip()
 
-        # 🚩 REPORTER 1: Master DB'de olmayan barkodlar (Eksik Barkod Raporu)
-        print("📋 Eksik barkod raporu kontrol ediliyor...")
-        generate_missing_barcode_report(self.parquet_path, self.master_db_path)
+        if not fast:
+            # 🚩 REPORTER 1: Master DB'de olmayan barkodlar (Eksik Barkod Raporu)
+            print("📋 Eksik barkod raporu kontrol ediliyor...")
+            generate_missing_barcode_report(self.parquet_path, self.master_db_path)
 
         # --- 2. MASTER DB BİRLEŞTİRME ---
         # --- 2. MASTER DB BİRLEŞTİRME ---
@@ -437,21 +450,29 @@ class NexusProcessor:
         # Veri temizlendiğine göre artık ATC analizini yapabiliriz.
         _t = {}  # zamanlama sözlüğü
 
-        print("🔍 ATC dağılımları hesaplanıyor...")
-        _t0 = time.time(); atc_results = analyze_atc_trends(df_merged); _t['ATC Analizi'] = time.time() - _t0
+        if not fast:
+            print("🔍 ATC dağılımları hesaplanıyor...")
+            _t0 = time.time(); atc_results = analyze_atc_trends(df_merged); _t['ATC Analizi'] = time.time() - _t0
 
-        # 🚩 EŞDEĞER GRUP ANALİZİ (YENİ SCRIPT)
-        print("🔍 Eşdeğer grup (Molekül) dağılımları hesaplanıyor...")
-        print(f"DEBUG: Mevcut Sütunlar: {df_merged.columns.tolist()}")
-        _t0 = time.time(); eq_results = analyze_equivalent_trends(df_merged); _t['Eşdeğer Analizi'] = time.time() - _t0
+            # 🚩 EŞDEĞER GRUP ANALİZİ (YENİ SCRIPT)
+            print("🔍 Eşdeğer grup (Molekül) dağılımları hesaplanıyor...")
+            print(f"DEBUG: Mevcut Sütunlar: {df_merged.columns.tolist()}")
+            _t0 = time.time(); eq_results = analyze_equivalent_trends(df_merged); _t['Eşdeğer Analizi'] = time.time() - _t0
 
-        # 🚩 REPORTER 2: Kategorisiz IDU ürünleri
-        print("🏷️ Kategorisiz ürün raporu hazırlanıyor...")
-        _t0 = time.time(); generate_nocategory_report(df_merged, self.tenant_dir); _t['Kategorisiz Rapor'] = time.time() - _t0
-        
-        # 🚩 REPORTER 3: Top 1000 İlaç Dışı Ürünler (Big Data için kritik)
-        print("🛒 Top 1000 ilaç dışı ürün analizi yapılıyor...")
-        _t0 = time.time(); generate_top_nonpharma_report(df_merged, self.tenant_dir, top_n=1000); _t['Top NonPharma'] = time.time() - _t0
+            # 🚩 REPORTER 2: Kategorisiz IDU ürünleri
+            print("🏷️ Kategorisiz ürün raporu hazırlanıyor...")
+            _t0 = time.time(); generate_nocategory_report(df_merged, self.tenant_dir); _t['Kategorisiz Rapor'] = time.time() - _t0
+            
+            # 🚩 REPORTER 3: Top 1000 İlaç Dışı Ürünler (Big Data için kritik)
+            print("🛒 Top 1000 ilaç dışı ürün analizi yapılıyor...")
+            _t0 = time.time(); generate_top_nonpharma_report(df_merged, self.tenant_dir, top_n=1000); _t['Top NonPharma'] = time.time() - _t0
+        else:
+            atc_results = cache_data.get('atc_analizi', {})
+            eq_results = cache_data.get('esdeger_analizi', {})
+            _t['ATC Analizi'] = 0.0
+            _t['Eşdeğer Analizi'] = 0.0
+            _t['Kategorisiz Rapor'] = 0.0
+            _t['Top NonPharma'] = 0.0
 
         # --- 4. ANALYTICS VE EŞDEĞER YÖNETİMİ ---
         print("📊 Satış trendleri analiz ediliyor...")
@@ -466,40 +487,62 @@ class NexusProcessor:
                 df_merged.loc[mask_missing, 'final_esdeger_id'] = range(-1000, -1000 - mask_missing.sum(), -1)
 
         # --- 5. ECZANE VE NÖBET ANALİZİ ---
-        print("🏥 Eczane profili analiz ediliyor...")
         _t0 = time.time()
-        try:
-            hi_info, ct_info, pz_info, islem_tipi_dagilimi, gun_saat_analizi = analyze_pharmacy_hours(df_merged)
-            print(f"✅ Eczane profili hazır - En yoğun saat: {gun_saat_analizi.get('en_yogun_saat')}:00")
-        except Exception as e:
-            print(f"❌ Eczane profili hatası: {e}")
-            import traceback
-            traceback.print_exc()
-            hi_info, ct_info, pz_info, islem_tipi_dagilimi = {}, {}, {}, []
-            gun_saat_analizi = {
+        if not fast:
+            print("🏥 Eczane profili analiz ediliyor...")
+            try:
+                hi_info, ct_info, pz_info, islem_tipi_dagilimi, gun_saat_analizi = analyze_pharmacy_hours(df_merged)
+                print(f"✅ Eczane profili hazır - En yoğun saat: {gun_saat_analizi.get('en_yogun_saat')}:00")
+            except Exception as e:
+                print(f"❌ Eczane profili hatası: {e}")
+                import traceback
+                traceback.print_exc()
+                hi_info, ct_info, pz_info, islem_tipi_dagilimi = {}, {}, {}, []
+                gun_saat_analizi = {
+                    'en_yogun_saat': 0,
+                    'saat_yuzdeleri': {},
+                    'en_yogun_saatler': [],
+                    'gun_yuzdeleri': {},
+                    'en_yogun_gunler': []
+                }
+        else:
+            ecz_prof = cache_data.get('eczane_profili', {})
+            saatler = ecz_prof.get('saatler', {})
+            hi_info = saatler.get('hi', {})
+            ct_info = saatler.get('ct', {})
+            pz_info, islem_tipi_dagilimi = {}, []
+            gun_saat_analizi = cache_data.get('gun_saat_analizi', {
                 'en_yogun_saat': 0,
                 'saat_yuzdeleri': {},
                 'en_yogun_saatler': [],
                 'gun_yuzdeleri': {},
                 'en_yogun_gunler': []
-            }
-        _t['Eczane Profili'] = time.time() - _t0
+            })
+        _t['Eczane Profil'] = time.time() - _t0
 
-        _t0 = time.time(); konum_tahmini, konum_detayi = detect_location_profile(df_merged, df_master); _t['Konum Tespiti'] = time.time() - _t0
-
-        print("💰 İlaç fiyat kademeleri ve kârlılık analiz ediliyor...")
-        _t0 = time.time(); margin_results = analyze_margins(df_merged); _t['Margin Analizi'] = time.time() - _t0
-
-        print("🌙 Geçmiş nöbetler tespit ediliyor...")
-        _t0 = time.time(); found_duty_dates = analyze_and_log_duties(df_merged, hi_info, ct_info); _t['Nöbet Tespiti'] = time.time() - _t0
-
-        # 🚩 YENİ: Son Nöbet Detay Raporu (Tarihli Dosya)
-        _t0 = time.time()
-        try:
-            generate_last_duty_report(df_merged, hi_info, ct_info, found_duty_dates, self.tenant_dir)
-        except Exception as e:
-            print(f"❌ Son nöbet raporu oluşturulurken hata: {e}")
-        _t['Son Nöbet Raporu'] = time.time() - _t0
+        if not fast:
+            _t0 = time.time(); konum_tahmini, konum_detayi = detect_location_profile(df_merged, df_master); _t['Konum Tespiti'] = time.time() - _t0
+            print("💰 İlaç fiyat kademeleri ve kârlılık analiz ediliyor...")
+            _t0 = time.time(); margin_results = analyze_margins(df_merged); _t['Margin Analizi'] = time.time() - _t0
+            print("🌙 Geçmiş nöbetler tespit ediliyor...")
+            _t0 = time.time(); found_duty_dates = analyze_and_log_duties(df_merged, hi_info, ct_info); _t['Nöbet Tespiti'] = time.time() - _t0
+            # 🚩 YENİ: Son Nöbet Detay Raporu (Tarihli Dosya)
+            _t0 = time.time()
+            try:
+                generate_last_duty_report(df_merged, hi_info, ct_info, found_duty_dates, self.tenant_dir)
+            except Exception as e:
+                print(f"❌ Son nöbet raporu oluşturulurken hata: {e}")
+            _t['Son Nöbet Raporu'] = time.time() - _t0
+        else:
+            ecz_prof = cache_data.get('eczane_profili', {})
+            konum_tahmini = ecz_prof.get('konum', '')
+            konum_detayi = ecz_prof.get('detay', '')
+            margin_results = cache_data.get('kademe_analizi', {})
+            found_duty_dates = []
+            _t['Konum Tespiti'] = 0.0
+            _t['Margin Analizi'] = 0.0
+            _t['Nöbet Tespiti'] = 0.0
+            _t['Son Nöbet Raporu'] = 0.0
 
         # --- 6. ÜRÜN PROFİLLEME VE STRATEJİ ---
         print("📦 Ürün bazlı hibrit hız ve stok analizi yapılıyor...")
@@ -580,27 +623,35 @@ class NexusProcessor:
         # NaN ve Inf değerleri JSON'ı bozar.
         df_profiled = df_profiled.replace([np.inf, -np.inf], 0).fillna(0)
 
-        print("📋 Sayım planı oluşturuluyor...")
         _t0 = time.time()
-        try:
-            if 'stok' not in df_profiled.columns and 'stok_adet' in df_profiled.columns:
-                df_profiled['stok'] = df_profiled['stok_adet']
-            count_plan = generate_count_plan(df_profiled)
-            print(f"✅ Sayım planı {len(count_plan)} personel için hazırlandı.")
-        except Exception as e:
-            print(f"❌ Sayım planı oluşturulurken hata: {str(e)}")
-            count_plan = []
-        _t['Sayım Planı'] = time.time() - _t0
+        if not fast:
+            print("📋 Sayım planı oluşturuluyor...")
+            try:
+                if 'stok' not in df_profiled.columns and 'stok_adet' in df_profiled.columns:
+                    df_profiled['stok'] = df_profiled['stok_adet']
+                count_plan = generate_count_plan(df_profiled)
+                print(f"✅ Sayım planı {len(count_plan)} personel için hazırlandı.")
+            except Exception as e:
+                print(f"❌ Sayım planı oluşturulurken hata: {str(e)}")
+                count_plan = []
+            _t['Sayım Planı'] = time.time() - _t0
 
-        # --- 7. PROJEKSİYONLAR VE UI PAKETLEME ---
-        print("🔮 Gelecek nöbet projeksiyonları...")
-        _t0 = time.time()
-        duty_projections = generate_duty_projections(
-            df_merged, df_profiled, hi_info, ct_info, found_duty_dates
-        )
-        _t['Nöbet Projeksiyonu'] = time.time() - _t0
+            # --- 7. PROJEKSİYONLAR VE UI PAKETLEME ---
+            print("🔮 Gelecek nöbet projeksiyonları...")
+            _t0 = time.time()
+            duty_projections = generate_duty_projections(
+                df_merged, df_profiled, hi_info, ct_info, found_duty_dates
+            )
+            _t['Nöbet Projeksiyonu'] = time.time() - _t0
 
-        _t0 = time.time(); cash_relief_list = calculate_cash_relief(df_profiled); _t['Nakit Optimizasyon'] = time.time() - _t0
+            _t0 = time.time(); cash_relief_list = calculate_cash_relief(df_profiled); _t['Nakit Optimizasyon'] = time.time() - _t0
+        else:
+            count_plan = cache_data.get('sayim_plani', [])
+            duty_projections = cache_data.get('nobet_listesi', [])
+            cash_relief_list = cache_data.get('nakit_optimizasyon', [])
+            _t['Sayım Planı'] = 0.0
+            _t['Nöbet Projeksiyonu'] = 0.0
+            _t['Nakit Optimizasyon'] = 0.0
 
         # ──────────────────────────────────────────────────────────
         # 🎁 UI PAKETLEME (BAŞLANGIÇ)
