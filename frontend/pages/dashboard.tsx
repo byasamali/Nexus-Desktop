@@ -692,6 +692,7 @@ export default function OrderCockpit() {
   // ⚡ Acil Sipariş Modu State'leri
   const [showUrgentModal, setShowUrgentModal] = useState(false);
   const [urgentWarehouse, setUrgentWarehouse] = useState<string>('as_ecza');
+  const [urgentSkipMfQuery, setUrgentSkipMfQuery] = useState<boolean>(false);
   const [mfQueryProduct, setMfQueryProduct] = useState<any>(null);
   const [selectedMfWarehouse, setSelectedMfWarehouse] = useState<string>('as_ecza');
   const [isSingleMfQuerying, setIsSingleMfQuerying] = useState<boolean>(false);
@@ -1071,7 +1072,7 @@ export default function OrderCockpit() {
   const runAISimulation = async () => {
     try {
       const gln = data?.gln || 'local';
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = new Date().toLocaleDateString('en-CA');
 
     // B. Her simülasyon öncesi değişen satırlar için tarama yapsın
     if (appSettings.scan_before_simulation) {
@@ -1183,7 +1184,7 @@ export default function OrderCockpit() {
         }
         
         // Ardından sorgu önbelleğini yükle
-        const cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : 'as_ecza_query_cache.json';
+        const cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : (aiSimulationWarehouse === 'alliance' ? 'alliance_query_cache.json' : 'as_ecza_query_cache.json');
         const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
         if (cacheStr && cacheStr !== '{}') {
           const legacyCache = JSON.parse(cacheStr);
@@ -1805,6 +1806,8 @@ export default function OrderCockpit() {
                 return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
               };
               mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
+            } else {
+              throw new Error(queryResult?.error || 'Alliance sorgu hatası');
             }
             
             detail = {
@@ -1814,6 +1817,51 @@ export default function OrderCockpit() {
               ad: name,
               kod: queryResult?.item?.Code || ''
             };
+
+            cache[barcode] = {
+              date: todayStr,
+              stok: stokVal,
+              fiyat_depocu: dsfVal,
+              fiyat_etiket: psfVal,
+              mf_baremleri: mfList,
+              net_fiyatlar: netList,
+              kod: queryResult?.item?.Code || '',
+              depo: 'ALLIANCE'
+            };
+
+            if ((window as any).go?.main?.App?.SaveLocalJSON) {
+              await (window as any).go.main.App.SaveLocalJSON(gln, "alliance_query_cache.json", JSON.stringify(cache));
+            }
+
+            await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
+
+            try {
+              const qtyInCart = cart[barcode]?.qty || 0;
+              const entry = {
+                tarih:        todayStr,
+                barkod:       barcode,
+                urun_adi:     name,
+                miktar:       qtyInCart,
+                urun_kodu:    queryResult?.item?.Code || '',
+                fiyat_etiket: +psfVal.toFixed(2),
+                fiyat_depocu: +dsfVal.toFixed(2),
+                mf1:          mfList[0]  || null,
+                mf2:          mfList[1]  || null,
+                mf3:          mfList[2]  || null,
+                net_fiyat1:   null,
+                net_fiyat2:   null,
+                net_fiyat3:   null,
+                stok_durumu:  stokVal,
+                kdv:          1,
+                firma_adi:    "",
+                urun_tipi:    "Itriyat",
+                durum:        'success',
+                depo:         'ALLIANCE'
+              };
+              if ((window as any).go?.main?.App?.AppendOrderResult) {
+                await (window as any).go.main.App.AppendOrderResult(gln, entry);
+              }
+            } catch {}
 
           } else {
             // A. Ürün Arama (AS Ecza)
@@ -2652,7 +2700,7 @@ export default function OrderCockpit() {
   const runUrgentQuery = async () => {
     try {
       const gln = data?.gln || 'local';
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = new Date().toLocaleDateString('en-CA');
       const targetDaysLimit = urgentDaysLimit === 'aySonu' ? getDaysUntilMonthEnd() : urgentDaysLimit;
 
       if (appSettings.scan_before_simulation) {
@@ -2711,7 +2759,7 @@ export default function OrderCockpit() {
       let cache: Record<string, any> = {};
       try {
         if ((window as any).go?.main?.App?.LoadLocalJSON) {
-          const orderFile = urgentWarehouse === 'gek' ? 'gek_siparisler.json' : (urgentWarehouse === 'alliance' ? 'alliance_siparisler.json' : (urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza' ? 'as_siparisler.json' : `${urgentWarehouse}_siparisler.json`));
+          const orderFile = urgentWarehouse === 'gek' ? 'gek_siparisler.json' : 'as_siparisler.json';
           const rawSiparisler = await (window as any).go.main.App.LoadLocalJSON(gln, orderFile);
           if (rawSiparisler && rawSiparisler !== '{}') {
             const parsed = JSON.parse(rawSiparisler);
@@ -2777,27 +2825,31 @@ export default function OrderCockpit() {
       
       const warehouseName = loadDepolar().find(d => d.id === urgentWarehouse)?.ad || 'AS Ecza';
 
-      for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
-        if (el && typeof el.executeJavaScript === 'function') {
-          try {
-            const url: string = await el.executeJavaScript('location.href');
-            if (url.includes(targetDomain) || 
-                ((urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
-                (urgentWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
-              hiddenWebview = el;
-              break;
-            }
-          } catch (e) {}
+      if (!urgentSkipMfQuery) {
+        for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
+          if (el && typeof el.executeJavaScript === 'function') {
+            try {
+              const url: string = await el.executeJavaScript('location.href');
+              if (url.includes(targetDomain) || 
+                  ((urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                  (urgentWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
+                hiddenWebview = el;
+                break;
+              }
+            } catch (e) {}
+          }
         }
       }
 
       if (!hiddenWebview) {
-        const proceed = window.confirm(`${warehouseName} oturumu bulunamadı.\n\nYalnızca önbellek verileriyle (MF sorgulaması yapılmadan) simülasyonu başlatmak ister misiniz?\n\nTamam → Önbellek ile devam et\nİptal → Simülasyonu durdur`);
-        if (!proceed) return;
+        if (!urgentSkipMfQuery) {
+          const proceed = window.confirm(`${warehouseName} oturumu bulunamadı.\n\nYalnızca önbellek verileriyle (MF sorgulaması yapılmadan) simülasyonu başlatmak ister misiniz?\n\nTamam → Önbellek ile devam et\nİptal → Simülasyonu durdur`);
+          if (!proceed) return;
+        }
         // hiddenWebview null kalıyor; döngü önbellek verisini kullanacak
       }
 
-      if (urgentWarehouse === 'gek') {
+      if (urgentWarehouse === 'gek' && hiddenWebview) {
         try {
           const currentUrl: string = await hiddenWebview.executeJavaScript('location.href');
           if (currentUrl.includes('irj/portal') && !currentUrl.includes('FrameWorkT1')) {
@@ -2855,6 +2907,73 @@ export default function OrderCockpit() {
         setUrgentProgress(`Canlı veriler kontrol ediliyor [${i + 1}/${productsToQuery.length}]: ${name}`);
 
         try {
+          // ── SKIP MODE: depodan sorgu yapma, bellekte varsa kullan ──────────────
+          if (urgentSkipMfQuery) {
+            setUrgentProgress(`Simüle ediliyor [${i + 1}/${productsToQuery.length}]: ${name}`);
+            const cachedEntry = cache[barcode];
+            const isFromCache = !!(cachedEntry && cachedEntry.date === todayStr);
+            const dsfSkip  = isFromCache ? (cachedEntry.fiyat_depocu || 0) : 0;
+            const psfSkip  = isFromCache ? (cachedEntry.fiyat_etiket || 0) : 0;
+            const mfSkip   = isFromCache ? (cachedEntry.mf_baremleri  || []) : [];
+            const netSkip  = isFromCache ? (cachedEntry.net_fiyatlar  || []) : [];
+
+            const itemStock  = item.stok ?? 0;
+            const dailySpd   = item.dailySpeed ?? ((item.hiz ?? 0) / 30);
+            const monthlySpd = item.hiz ?? 0;
+            const rawNeed    = dailySpd * targetDaysLimit - itemStock;
+            const need       = Math.max(0, Math.ceil(rawNeed));
+            let   skipQty    = need > 0 ? need : (itemStock <= 0 ? Math.max(1, Math.ceil(dailySpd * 7)) : 1);
+
+            let skipBarem: string | null = null;
+            let skipNetPrice = dsfSkip;
+            if (mfSkip.length > 0 && need > 0 && dsfSkip > 0) {
+              const parsed = mfSkip.map((m: string, idx: number) => {
+                const parts = m.split('+');
+                const ana   = parseInt(parts[0]) || 0;
+                const bedava = parseInt(parts[1]) || 0;
+                const np = parsePriceLocal(netSkip[idx]) || (ana + bedava > 0 ? dsfSkip * ana / (ana + bedava) : dsfSkip);
+                return { raw: m, ana, bedava, np };
+              }).filter((b: any) => b.ana > 0).sort((a: any, b: any) => a.ana - b.ana);
+
+              for (let bi = parsed.length - 1; bi >= 0; bi--) {
+                if (parsed[bi].ana <= need) {
+                  skipBarem    = parsed[bi].raw;
+                  skipQty      = parsed[bi].ana;
+                  skipNetPrice = parsed[bi].np;
+                  break;
+                }
+              }
+            }
+
+            results.push({
+              barkod:       barcode,
+              ad:           name,
+              stok:         itemStock,
+              hiz:          monthlySpd,
+              dailySpeed:   dailySpd,
+              estOmur:      item.estOmur ?? 0,
+              depoStok:     isFromCache ? (cachedEntry.stok || 0) : 0,
+              depocuFiyati: dsfSkip,
+              fiyatEtiket:  psfSkip,
+              secilenBarem: skipBarem,
+              onerilenMf:   skipBarem,
+              onerilen:     skipQty,
+              netFiyat:     skipBarem ? skipNetPrice : null,
+              toplamTutar:  skipQty * dsfSkip,
+              isCached:     isFromCache,
+              baremler:     mfSkip,
+              netFiyatlar:  netSkip,
+              whyData:      null,
+              esdegerGrubu: null,
+              selected:     true,
+              hata:         null,
+            });
+            setUrgentResults([...results]);
+            await sleep(10);
+            continue;
+          }
+          // ── END SKIP MODE ────────────────────────────────────────────────────────
+
           const cached = cache[barcode];
           let detail: any = null;
           let mfList: string[] = [];
@@ -2879,25 +2998,29 @@ export default function OrderCockpit() {
           } else {
             // Önbellekte yoksa, canlı sorgu atıyoruz
             if (!hiddenWebview) {
-              // Depo bağlantısı yok - önbellekte veri bulunamadı
+              // Depo bağlantısı yok veya MF sorgulaması atlandı
               const daysLimitCount = urgentDaysLimit === 'aySonu' ? getDaysUntilMonthEnd() : urgentDaysLimit;
               const itemStock = item.stok ?? 0;
               const itemSpeed = item.hiz ?? 0;
+              const rawNeed = itemSpeed * daysLimitCount - itemStock;
+              const need = Math.max(0, Math.ceil(rawNeed));
               results.push({
                 barkod: barcode,
                 ad: name,
                 stok: itemStock,
                 hiz: itemSpeed,
                 estOmur: item.estOmur ?? 0,
-                onerilen: 0,
+                onerilen: urgentSkipMfQuery ? need : 0,
                 baremler: [],
                 secilenBarem: null,
                 onerilenMf: null,
                 depocuFiyati: 0,
+                fiyatEtiket: 0,
+                netFiyat: null,
                 toplamTutar: 0,
                 depo: '',
                 isCached: false,
-                hata: 'Depo bağlantısı yok — önbellekte veri bulunamadı',
+                hata: urgentSkipMfQuery ? null : 'Depo bağlantısı yok — önbellekte veri bulunamadı',
                 selected: true
               });
               setUrgentResults([...results]);
@@ -3190,6 +3313,8 @@ export default function OrderCockpit() {
                   return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
                 };
                 mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
+              } else {
+                throw new Error(queryResult?.error || 'Alliance sorgu hatası');
               }
               
               detail = {
@@ -3199,6 +3324,51 @@ export default function OrderCockpit() {
                 ad: name,
                 kod: queryResult?.item?.Code || ''
               };
+
+              cache[barcode] = {
+                date: todayStr,
+                stok: stokVal,
+                fiyat_depocu: dsfVal,
+                fiyat_etiket: psfVal,
+                mf_baremleri: mfList,
+                net_fiyatlar: netList,
+                kod: queryResult?.item?.Code || '',
+                depo: 'ALLIANCE'
+              };
+
+              if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln, "alliance_query_cache.json", JSON.stringify(cache));
+              }
+
+              await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
+
+              try {
+                const qtyInCart = cart[barcode]?.qty || 0;
+                const entry = {
+                  tarih:        todayStr,
+                  barkod:       barcode,
+                  urun_adi:     name,
+                  miktar:       qtyInCart,
+                  urun_kodu:    queryResult?.item?.Code || '',
+                  fiyat_etiket: +psfVal.toFixed(2),
+                  fiyat_depocu: +dsfVal.toFixed(2),
+                  mf1:          mfList[0]  || null,
+                  mf2:          mfList[1]  || null,
+                  mf3:          mfList[2]  || null,
+                  net_fiyat1:   null,
+                  net_fiyat2:   null,
+                  net_fiyat3:   null,
+                  stok_durumu:  stokVal,
+                  kdv:          1,
+                  firma_adi:    "",
+                  urun_tipi:    "Itriyat",
+                  durum:        'success',
+                  depo:         'ALLIANCE'
+                };
+                if ((window as any).go?.main?.App?.AppendOrderResult) {
+                  await (window as any).go.main.App.AppendOrderResult(gln, entry);
+                }
+              } catch {}
 
             } else {
               const searchResult: any = await hiddenWebview.executeJavaScript(`
@@ -4247,6 +4417,15 @@ export default function OrderCockpit() {
   const handleExecuteSingleProductMFQuery = async (urun: any, warehouseId: string) => {
     if (!urun) return;
     
+    const extractSpansLocal = (htmlStr: string): string[] => {
+      if (!htmlStr) return [];
+      const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
+      if (!matches) {
+        return htmlStr.includes('<') ? [] : [htmlStr.trim()];
+      }
+      return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
+    };
+    
     const activeDepolar = loadDepolar();
     const currentDepo = activeDepolar.find(d => d.id === warehouseId);
     if (!currentDepo) {
@@ -4387,12 +4566,6 @@ export default function OrderCockpit() {
           psfVal = parseFloat(item.LabelPrice) || 0;
           
           const detailHtml = queryResult.detailHtml || "";
-          const extractSpansLocal = (htmlStr: string): string[] => {
-            if (!htmlStr) return [];
-            const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
-            if (!matches) return [];
-            return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
-          };
           mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
         }
       } else {
@@ -4452,8 +4625,14 @@ export default function OrderCockpit() {
           const nArray: string[] = [];
           kampanyalar.forEach((kamp: any) => {
             if (kamp?.mf && String(kamp.mf).trim().length > 0) {
-              bArray.push(kamp.mf);
-              nArray.push(kamp.netFiyat || '');
+              const cleanedMf = extractSpansLocal(kamp.mf).filter(m => {
+                if (!m) return false;
+                if (m.toLowerCase().endsWith('+0')) return false;
+                return true;
+              });
+              const cleanedNet = extractSpansLocal(kamp.netFiyat || '');
+              bArray.push(...cleanedMf);
+              nArray.push(...cleanedNet);
             }
           });
           mfList = bArray;
@@ -5681,8 +5860,14 @@ export default function OrderCockpit() {
                       <option value="30">30 Günlük</option>
                       <option value="45">45 Günlük</option>
                       <option value="60">60 Günlük</option>
-                      <option value="aySonu">Ay Sonuna Kadar</option>
                     </select>
+
+                    <div className="w-[1px] h-4 bg-stone-200 mx-2 hidden sm:block"></div>
+
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-red-700 transition-colors" title="MF sorgulaması yapmadan yalnızca önbellek/yerel verilerle simülasyon yap">
+                      <input type="checkbox" checked={urgentSkipMfQuery} onChange={e => setUrgentSkipMfQuery(e.target.checked)} className="w-3.5 h-3.5 rounded accent-red-650" />
+                      MF Sorgulamayı atla
+                    </label>
                   </div>
 
                   <div className="flex items-center gap-3">
