@@ -49,7 +49,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
     const [onlyShowDiff, setOnlyShowDiff] = useState(false);
 
     // Canlı sorgu state'leri
-    const [queryWarehouse, setQueryWarehouse] = useState<string>('as');
+    const [queryWarehouse, setQueryWarehouse] = useState<string>('as_ecza');
     const [selectedBarcodes, setSelectedBarcodes] = useState<Set<string>>(new Set());
     const [queryProgress, setQueryProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
     const [isQuerying, setIsQuerying] = useState(false);
@@ -307,18 +307,27 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
         const warehouseName = loadDepolar().find(d => d.id === queryWarehouse)?.ad || 'AS Ecza';
         
         if (webviewRefs && webviewRefs.current) {
-            for (const [id, el] of Object.entries(webviewRefs.current)) {
-                if (el && typeof el.executeJavaScript === 'function') {
-                    try {
-                        const url: string = await el.executeJavaScript('location.href');
-                        if (url.includes(targetDomain) || 
-                            ((queryWarehouse === 'as' || queryWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
-                            (queryWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
-                            hiddenWebview = el;
-                            break;
+            // Öncelikle depo ID'sine göre doğrudan eşleştirmeyi dene
+            const directEl = webviewRefs.current[queryWarehouse];
+            if (directEl && typeof directEl.executeJavaScript === 'function') {
+                hiddenWebview = directEl;
+            }
+            
+            // Bulunamazsa URL tabanlı geri çekilme (fallback) eşleştirmesini yap
+            if (!hiddenWebview) {
+                for (const [id, el] of Object.entries(webviewRefs.current)) {
+                    if (el && typeof el.executeJavaScript === 'function') {
+                        try {
+                            const url: string = await el.executeJavaScript('location.href');
+                            if (url.includes(targetDomain) || 
+                                ((queryWarehouse === 'as' || queryWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                                (queryWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
+                                hiddenWebview = el;
+                                break;
+                            }
+                        } catch (e) {
+                            // ignore
                         }
-                    } catch (e) {
-                        // ignore
                     }
                 }
             }

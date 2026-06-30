@@ -1277,18 +1277,27 @@ export default function OrderCockpit() {
     const warehouseName = loadDepolar().find(d => d.id === aiSimulationWarehouse)?.ad || 'AS Ecza';
 
     if (!aiSkipMfQuery) {
-      for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
-        if (el && typeof el.executeJavaScript === 'function') {
-          try {
-            const url: string = await el.executeJavaScript('location.href');
-            if (url.includes(targetDomain) || 
-                ((aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
-                (aiSimulationWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
-              hiddenWebview = el;
-              break;
+      // Öncelikle depo ID'sine göre doğrudan eşleştirmeyi dene
+      const directEl = sharedWebviewRefs.current[aiSimulationWarehouse];
+      if (directEl && typeof directEl.executeJavaScript === 'function') {
+        hiddenWebview = directEl;
+      }
+      
+      // Bulunamazsa URL tabanlı geri çekilme (fallback) eşleştirmesini yap
+      if (!hiddenWebview) {
+        for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
+          if (el && typeof el.executeJavaScript === 'function') {
+            try {
+              const url: string = await el.executeJavaScript('location.href');
+              if (url.includes(targetDomain) || 
+                  ((aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                  (aiSimulationWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
+                hiddenWebview = el;
+                break;
+              }
+            } catch (e) {
+              // ignore
             }
-          } catch (e) {
-            // ignore
           }
         }
       }
@@ -2828,17 +2837,26 @@ export default function OrderCockpit() {
       const warehouseName = loadDepolar().find(d => d.id === urgentWarehouse)?.ad || 'AS Ecza';
 
       if (!urgentSkipMfQuery) {
-        for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
-          if (el && typeof el.executeJavaScript === 'function') {
-            try {
-              const url: string = await el.executeJavaScript('location.href');
-              if (url.includes(targetDomain) || 
-                  ((urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
-                  (urgentWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
-                hiddenWebview = el;
-                break;
-              }
-            } catch (e) {}
+        // Öncelikle depo ID'sine göre doğrudan eşleştirmeyi dene
+        const directEl = sharedWebviewRefs.current[urgentWarehouse];
+        if (directEl && typeof directEl.executeJavaScript === 'function') {
+          hiddenWebview = directEl;
+        }
+        
+        // Bulunamazsa URL tabanlı geri çekilme (fallback) eşleştirmesini yap
+        if (!hiddenWebview) {
+          for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
+            if (el && typeof el.executeJavaScript === 'function') {
+              try {
+                const url: string = await el.executeJavaScript('location.href');
+                if (url.includes(targetDomain) || 
+                    ((urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                    (urgentWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
+                  hiddenWebview = el;
+                  break;
+                }
+              } catch (e) {}
+            }
           }
         }
       }
