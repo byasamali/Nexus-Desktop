@@ -2095,12 +2095,49 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
     setBulkQueryLoading(true);
 
+    const cacheFilename = depoId === 'gek' ? 'gek_query_cache.json' : (depoId === 'alliance' ? 'alliance_query_cache.json' : (depoId === 'as_ecza' || depoId === 'as' ? 'as_ecza_query_cache.json' : `${depoId}_query_cache.json`));
+    let cache: any = {};
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    try {
+      const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln || 'local', cacheFilename);
+      if (cacheStr && cacheStr !== '{}') cache = JSON.parse(cacheStr);
+    } catch (e) {
+      console.error('[Depolar] Önbellek yüklenemedi:', e);
+    }
+
     try {
       const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
       let loginRequiredEncountered = false;
+      let debugTokenToUseLength = 0;
 
       for (let i = 0; i < barcodes.length; i++) {
         const barcode = barcodes[i];
+
+        // Önbellek kontrolü
+        const cached = cache[barcode];
+        if (cached && cached.date === todayStr) {
+          const stokVal = cached.stok || 0;
+          const dsfVal = cached.fiyat_depocu || 0;
+          const mfList = cached.mf_baremleri || [];
+          const netList = cached.net_fiyatlar || [];
+
+          setBulkQueryResult(prev => ({
+            ...prev,
+            [barcode]: {
+              ok: true,
+              stok: stokVal,
+              fiyat_depocu: dsfVal,
+              mf: mfList[0] || undefined,
+              net: parsePrice(netList[0]) || undefined
+            }
+          }));
+
+          // sqlite güncelle
+          if (depoId === 'as_ecza') {
+            await updateDbWithLiveData(barcode, dsfVal, cached.fiyat_etiket || (dsfVal * 1.25), mfList);
+          }
+          continue; // Live query'yi atla
+        }
 
         setToast({
           id: Date.now(),
@@ -2174,16 +2211,125 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             }
           } else if (depoId === 'gek' || depoId === 'bek' || depoId === 'iskoop') {
             // GEK/BEK/Iskoop family (MainService REST API)
-            const tokenToUse = (depoId === 'gek' ? gekToken : depoId === 'bek' ? (typeof window !== 'undefined' ? localStorage.getItem('nexus_bek_token') : '') : (typeof window !== 'undefined' ? localStorage.getItem('nexus_iskoop_token') : '')) || '';
+            const tokenToUse = (depoId === 'gek' ? (gekToken || (typeof window !== 'undefined' ? localStorage.getItem('nexus_gek_token') : '')) : depoId === 'bek' ? (typeof window !== 'undefined' ? localStorage.getItem('nexus_bek_token') : '') : (typeof window !== 'undefined' ? localStorage.getItem('nexus_iskoop_token') : '')) || '';
+            debugTokenToUseLength = tokenToUse.length;
             const relativeBase = depoId === 'bek' ? '/MainService/api/rfc/mat' : '/MainService/api/rfc';
 
             queryResult = await webview.executeJavaScript(`
               (async function() {
+                const diag = {
+                  step: 'init',
+                  location: window.location.href,
+                  cookieLength: document.cookie ? document.cookie.length : 0,
+                  tokFromParentLength: ${JSON.stringify(tokenToUse)}.length,
+                  windowTokenLength: (window.__gekToken || window.__bekToken || window.__iskoopToken || '').length,
+                  storageTokenLength: 0,
+                  cookiesTokenLength: 0,
+                  gtFetchStatus: 0,
+                  gtFetchError: '',
+                  finalTokenLength: 0
+                };
                 try {
-                  const tok = window.__gekToken || window.__bekToken || window.__iskoopToken || ${JSON.stringify(tokenToUse)};
-                  if (!tok) return { error: 'login_required' };
+                  let tok = window.__gekToken || window.__bekToken || window.__iskoopToken || ${JSON.stringify(tokenToUse)};
+                  if (!tok) {
+                    const stores = [window.localStorage, window.sessionStorage];
+                    const keys = ['token','Token','TOKEN','gek_token','gekToken','accessToken','access_token','auth_token','authToken','jwt','JWT'];
+                    for (const store of stores) {
+                      if (tok) break;
+                      if (!store) continue;
+                      for (const k of keys) {
+                        try {
+                          const v = store.getItem(k);
+                          if (v && v.length > 10 && !v.startsWith('{')) {
+                            tok = v;
+                            diag.step = 'storage';
+                            diag.storageTokenLength = v.length;
+                            break;
+                          }
+                          if (v && v.length > 10) {
+                            try {
+                              const j = JSON.parse(v);
+                              const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token;
+                              if(t) {
+                                tok = t;
+                                diag.step = 'storage_json';
+                                diag.storageTokenLength = t.length;
+                                break;
+                              }
+                            } catch {}
+                          }
+                        } catch {}
+                      }
+                    }
+                  }
+                  if (!tok) {
+                    try {
+                      const cookies = document.cookie.split(';');
+                      for (const c of cookies) {
+                        const [k, v] = c.trim().split('=');
+                        if (k && ['token','Token','TOKEN','auth','jwt'].some(kk => k.toLowerCase().includes(kk))) {
+                          if (v && v.length > 10) {
+                            tok = decodeURIComponent(v);
+                            diag.step = 'cookies';
+                            diag.cookiesTokenLength = tok.length;
+                            break;
+                          }
+                        }
+                      }
+                    } catch {}
+                  }
+                  if (!tok) {
+                    try {
+                      const base = ${JSON.stringify(relativeBase)};
+                      diag.step = 'gt_fetch_started';
+                      const gtResp = await fetch(base + '/gt', {
+                        method: 'GET',
+                        headers: { 'accept': 'application/json;charset=UTF-8' },
+                        credentials: 'include'
+                      });
+                      diag.gtFetchStatus = gtResp.status;
+                      if (gtResp.ok) {
+                        const rawText = await gtResp.text();
+                        let t = null;
+                        try {
+                          const j = JSON.parse(rawText);
+                          t = j.token || j.Token || j.TOKEN || j.accessToken || j.access_token || j.data?.token || rawText.trim();
+                        } catch {
+                          t = rawText.trim();
+                        }
+                        if (t && t.length > 10) {
+                          tok = t;
+                          diag.step = 'gt_fetch_success';
+                        }
+                      } else {
+                        diag.gtFetchError = 'HTTP status ' + gtResp.status;
+                      }
+                    } catch(gtErr) {
+                      diag.gtFetchError = String(gtErr?.message || gtErr);
+                    }
+                  }
+                  if (!tok) return { error: 'login_required', diagnostics: diag };
+                  
+                  diag.finalTokenLength = tok.length;
+
+                  if (${JSON.stringify(depoId)} === 'gek') window.__gekToken = tok;
+                  else if (${JSON.stringify(depoId)} === 'bek') window.__bekToken = tok;
+                  else if (${JSON.stringify(depoId)} === 'iskoop') window.__iskoopToken = tok;
+
                   const base = ${JSON.stringify(relativeBase)};
-                  const h = { 'accept': 'application/json;charset=UTF-8', 'token': tok, 'TOKEN': tok };
+                  const h = { 'accept': 'application/json;charset=UTF-8' };
+                  if (${JSON.stringify(depoId)} === 'gek') {
+                    h['TOKEN'] = tok;
+                    h['sln'] = '1';
+                  } else {
+                    h['token'] = tok;
+                  }
+
+                  // Initialize J2EE session context
+                  const udUrl = ${JSON.stringify(depoId)} === 'bek' ? '/MainService/api/rfc/ud' : base + '/ud';
+                  const gsUrl = ${JSON.stringify(depoId)} === 'bek' ? '/MainService/api/rfc/gs' : base + '/gs';
+                  await fetch(udUrl, { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                  await fetch(gsUrl, { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
                   
                   // For BEK, call /ss first
                   if (${JSON.stringify(depoId)} === 'bek') {
@@ -2195,8 +2341,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                   // Search
                   const sUrl = base + (${JSON.stringify(depoId)} === 'bek' ? '/sm?ST=${barcode}&TYP=3' : '/mat/sm?ST=${barcode}&TYP=3');
                   const sr = await fetch(sUrl, { method: 'GET', headers: h, credentials: 'include' });
-                  if (sr.status === 401 || sr.status === 403) return { error: 'login_required' };
-                  if (!sr.ok) return { error: 'search_failed', status: sr.status };
+                  if (sr.status === 401 || sr.status === 403) return { error: 'login_required', diagnostics: diag };
+                  if (!sr.ok) return { error: 'search_failed', status: sr.status, diagnostics: diag };
                   const sd = await sr.json();
                   const items = sd && Array.isArray(sd.ET_MAKTX) ? sd.ET_MAKTX : [];
                   if (!items.length) return { error: 'not_found' };
@@ -2332,6 +2478,18 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           if (!queryResult || queryResult.error) {
             if (queryResult?.error === 'login_required') {
               loginRequiredEncountered = true;
+              if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln || 'local', 'gek_debug.json', JSON.stringify({
+                  timestamp: new Date().toISOString(),
+                  barcode,
+                  depoId,
+                  gekTokenStateLength: (gekToken || '').length,
+                  localGekTokenStorageLength: (typeof window !== 'undefined' ? (localStorage.getItem('nexus_gek_token') || '').length : 0),
+                  tokenToUseLength: debugTokenToUseLength,
+                  webviewUrl: (typeof webview.getURL === 'function' ? webview.getURL() : '') || webview.src || '',
+                  webviewDiagnostics: queryResult.diagnostics || null
+                }, null, 2));
+              }
               setBulkQueryResult(prev => ({
                 ...prev,
                 [barcode]: { ok: false, error: 'login_required' }
@@ -2379,6 +2537,25 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             // SQLite veritabanını güncel canlı verilerle güncelle (opsiyonel)
             if (depoId === 'as_ecza') {
               await updateDbWithLiveData(barcode, dsfVal, psfVal, mfList);
+            }
+
+            // Önbelleğe kaydet
+            cache[barcode] = {
+              date: todayStr,
+              stok: stokVal,
+              fiyat_depocu: dsfVal,
+              fiyat_etiket: psfVal,
+              mf_baremleri: mfList,
+              net_fiyatlar: netList,
+              kod: queryResult?.detail?.kod || queryResult?.item?.Code || queryResult?.item?.ID || '',
+              depo: depoId.toUpperCase()
+            };
+            try {
+              if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln || 'local', cacheFilename, JSON.stringify(cache, null, 2));
+              }
+            } catch (e) {
+              console.error('[Depolar] Önbellek kaydedilemedi:', e);
             }
           }
         } catch (itemErr: any) {

@@ -159,6 +159,39 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                 failCount++;
                 continue;
             }
+
+            let cache: any = {};
+            let cacheFilename = '';
+            let todayStr = '';
+
+            todayStr = new Date().toLocaleDateString('en-CA');
+            cacheFilename = currentDepo.id === 'gek' ? 'gek_query_cache.json' : (currentDepo.id === 'alliance' ? 'alliance_query_cache.json' : (currentDepo.id === 'as' || currentDepo.id === 'as_ecza' ? 'as_ecza_query_cache.json' : `${currentDepo.id}_query_cache.json`));
+            try {
+                const rawCache = await (window as any).go.main.App.LoadLocalJSON(gln || 'local', cacheFilename);
+                if (rawCache && rawCache !== '{}') cache = JSON.parse(rawCache);
+            } catch {}
+
+            const cached = cache[barcode];
+            if (cached && cached.date === todayStr) {
+                const mfList = cached.mf_baremleri || [];
+                const parsedBarems = mfList.map((raw: string) => {
+                    const p = raw.split('+');
+                    return {
+                        ana: parseInt(p[0]) || 0,
+                        mf: parseInt(p[1]) || 0
+                    };
+                }).filter((b: any) => b.ana > 0 && b.mf > 0);
+
+                const index = updatedItems.findIndex(i => i.barkod === barcode);
+                if (index !== -1) {
+                    updatedItems[index] = {
+                        ...updatedItems[index],
+                        mf_baremleri: parsedBarems
+                    };
+                }
+                successCount++;
+                continue;
+            }
             
             setQueryProgress({
                 current: idx + 1,
@@ -168,7 +201,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
             
             try {
                 let targetDomain = 'asecza.com.tr';
-                if (currentDepo.id === 'gek') targetDomain = 'gek.org.tr';
+                if (currentDepo.id === 'gek') targetDomain = 'esube.gek.org.tr';
                 else if (currentDepo.id === 'alliance') targetDomain = 'alliance';
                 else if (currentDepo.id === 'selcuk') targetDomain = 'selcukecza.com.tr';
                 else if (currentDepo.id === 'nevzat') targetDomain = 'nevzatecza.com.tr';
@@ -208,6 +241,58 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                       (async function() {
                         try {
                           let token = window.__gekToken || ${JSON.stringify(localGekToken)} || "";
+                          if (!token) {
+                            const stores = [window.localStorage, window.sessionStorage];
+                            const keys = ['token','Token','TOKEN','gek_token','gekToken','accessToken','access_token','auth_token','authToken','jwt','JWT'];
+                            for (const store of stores) {
+                              if (token) break;
+                              if (!store) continue;
+                              for (const k of keys) {
+                                try {
+                                  const v = store.getItem(k);
+                                  if (v && v.length > 10 && !v.startsWith('{')) { token = v; break; }
+                                  if (v && v.length > 10) {
+                                    try { const j = JSON.parse(v); const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token; if(t) { token = t; break; } } catch {}
+                                  }
+                                } catch {}
+                              }
+                            }
+                          }
+                          if (!token) {
+                            try {
+                              const cookies = document.cookie.split(';');
+                              for (const c of cookies) {
+                                const [k, v] = c.trim().split('=');
+                                if (k && ['token','Token','TOKEN','auth','jwt'].some(kk => k.toLowerCase().includes(kk))) {
+                                  if (v && v.length > 10) { token = decodeURIComponent(v); break; }
+                                }
+                              }
+                            } catch {}
+                          }
+                          if (!token) {
+                            try {
+                              const gtResp = await fetch('https://esube.gek.org.tr/MainService/api/rfc/gt', {
+                                method: 'GET',
+                                headers: { 'accept': 'application/json;charset=UTF-8' },
+                                credentials: 'include'
+                              });
+                              if (gtResp.ok) {
+                                const rawText = await gtResp.text();
+                                let t = null;
+                                try {
+                                  const j = JSON.parse(rawText);
+                                  t = j.token || j.Token || j.TOKEN || j.accessToken || j.access_token || j.data?.token || rawText.trim();
+                                } catch {
+                                  t = rawText.trim();
+                                }
+                                if (t && t.length > 10) { token = t; }
+                              }
+                            } catch {}
+                          }
+                          if (!token) return { error: 'login_required' };
+                          
+                          window.__gekToken = token;
+
                           const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunArama", {
                             method: "POST",
                             headers: { "content-type": "application/json", "Authorization": "Bearer " + token },
@@ -222,6 +307,10 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                         } catch(e) { return { error: String(e) }; }
                       })()
                     `);
+                    
+                    if (queryResult && queryResult.error) {
+                      throw new Error(queryResult.error === 'login_required' ? 'GEK oturumu zaman aşımına uğramış' : queryResult.error);
+                    }
                     
                     if (queryResult && !queryResult.error) {
                       const matnr = queryResult.matnr;
@@ -372,6 +461,23 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                         mf_baremleri: parsedBarems
                     };
                 }
+
+                cache[barcode] = {
+                    date: todayStr,
+                    stok: 1,
+                    fiyat_depocu: 0,
+                    fiyat_etiket: 0,
+                    mf_baremleri: mfList,
+                    net_fiyatlar: netList || [],
+                    kod: '',
+                    depo: currentDepo.ad || currentDepo.id
+                };
+                try {
+                    await (window as any).go.main.App.SaveLocalJSON(gln || 'local', cacheFilename, JSON.stringify(cache, null, 2));
+                } catch (e) {
+                    console.error('Önbellek kaydetme hatası:', e);
+                }
+
                 successCount++;
             } catch (err) {
                 console.error(`Sorgulama hatası: ${item.ad}`, err);

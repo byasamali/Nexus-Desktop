@@ -1184,7 +1184,7 @@ export default function OrderCockpit() {
         }
         
         // Ardından sorgu önbelleğini yükle
-        const cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : (aiSimulationWarehouse === 'alliance' ? 'alliance_query_cache.json' : 'as_ecza_query_cache.json');
+        const cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : (aiSimulationWarehouse === 'alliance' ? 'alliance_query_cache.json' : (aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${aiSimulationWarehouse}_query_cache.json`));
         const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
         if (cacheStr && cacheStr !== '{}') {
           const legacyCache = JSON.parse(cacheStr);
@@ -1259,7 +1259,7 @@ export default function OrderCockpit() {
     // 3. Aktif depo webview referansını tarayıp bul
     let hiddenWebview: any = null;
     let targetDomain = 'asecza.com.tr';
-    if (aiSimulationWarehouse === 'gek') targetDomain = 'gek.org.tr';
+    if (aiSimulationWarehouse === 'gek') targetDomain = 'esube.gek.org.tr';
     else if (aiSimulationWarehouse === 'alliance') targetDomain = 'alliance';
     else if (aiSimulationWarehouse === 'selcuk') targetDomain = 'selcukecza.com.tr';
     else if (aiSimulationWarehouse === 'nevzat') targetDomain = 'nevzatecza.com.tr';
@@ -1703,7 +1703,7 @@ export default function OrderCockpit() {
             };
 
             if ((window as any).go?.main?.App?.SaveLocalJSON) {
-              await (window as any).go.main.App.SaveLocalJSON(gln, "gek_query_cache.json", JSON.stringify(cache));
+              await (window as any).go.main.App.SaveLocalJSON(gln, cacheFile, JSON.stringify(cache));
             }
 
             // Canlı sorgulanan veriler veritabanını güncellemede kullanılır
@@ -1830,7 +1830,7 @@ export default function OrderCockpit() {
             };
 
             if ((window as any).go?.main?.App?.SaveLocalJSON) {
-              await (window as any).go.main.App.SaveLocalJSON(gln, "alliance_query_cache.json", JSON.stringify(cache));
+              await (window as any).go.main.App.SaveLocalJSON(gln, cacheFile, JSON.stringify(cache));
             }
 
             await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
@@ -1966,7 +1966,7 @@ export default function OrderCockpit() {
             };
 
             if ((window as any).go?.main?.App?.SaveLocalJSON) {
-              await (window as any).go.main.App.SaveLocalJSON(gln, "as_ecza_query_cache.json", JSON.stringify(cache));
+              await (window as any).go.main.App.SaveLocalJSON(gln, cacheFile, JSON.stringify(cache));
             }
 
             // Canlı sorgulanan veriler veritabanını güncellemede kullanılır
@@ -2809,7 +2809,7 @@ export default function OrderCockpit() {
 
       let hiddenWebview: any = null;
       let targetDomain = 'asecza.com.tr';
-      if (urgentWarehouse === 'gek') targetDomain = 'gek.org.tr';
+      if (urgentWarehouse === 'gek') targetDomain = 'esube.gek.org.tr';
       else if (urgentWarehouse === 'alliance') targetDomain = 'alliance';
       else if (urgentWarehouse === 'selcuk') targetDomain = 'selcukecza.com.tr';
       else if (urgentWarehouse === 'nevzat') targetDomain = 'nevzatecza.com.tr';
@@ -3222,8 +3222,8 @@ export default function OrderCockpit() {
                 depo: 'GEK'
               };
 
-              if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                await (window as any).go.main.App.SaveLocalJSON(gln, "gek_query_cache.json", JSON.stringify(cache));
+               if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln, cacheFile, JSON.stringify(cache));
               }
 
               await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
@@ -3336,8 +3336,8 @@ export default function OrderCockpit() {
                 depo: 'ALLIANCE'
               };
 
-              if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                await (window as any).go.main.App.SaveLocalJSON(gln, "alliance_query_cache.json", JSON.stringify(cache));
+               if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln, cacheFile, JSON.stringify(cache));
               }
 
               await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
@@ -3468,8 +3468,8 @@ export default function OrderCockpit() {
                 depo: 'AS ECZA'
               };
 
-              if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                await (window as any).go.main.App.SaveLocalJSON(gln, "as_ecza_query_cache.json", JSON.stringify(cache));
+               if ((window as any).go?.main?.App?.SaveLocalJSON) {
+                await (window as any).go.main.App.SaveLocalJSON(gln, cacheFile, JSON.stringify(cache));
               }
 
               await updateDbWithLiveDataLocal(barcode, dsfVal, psfVal, mfList);
@@ -4432,10 +4432,48 @@ export default function OrderCockpit() {
       alert('Depo bulunamadı.');
       return;
     }
+
+    const barcode = urun.v1;
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    const cacheFilename = warehouseId === 'gek' ? 'gek_query_cache.json' : (warehouseId === 'alliance' ? 'alliance_query_cache.json' : (warehouseId === 'as' || warehouseId === 'as_ecza' ? 'as_ecza_query_cache.json' : `${warehouseId}_query_cache.json`));
+    let cache: any = {};
+    try {
+      const rawCache = await (window as any).go.main.App.LoadLocalJSON(data?.gln || 'local', cacheFilename);
+      if (rawCache && rawCache !== '{}') cache = JSON.parse(rawCache);
+    } catch {}
+
+    const cached = cache[barcode];
+    if (cached && cached.date === todayStr) {
+      const mfList = cached.mf_baremleri || [];
+      const parsedBarems = mfList.map((raw: string) => {
+        const p = raw.split('+');
+        return {
+          ana: parseInt(p[0]) || 0,
+          mf: parseInt(p[1]) || 0
+        };
+      }).filter((b: any) => b.ana > 0 && b.mf > 0);
+
+      if (data && Array.isArray(data.gruplar)) {
+        const updatedGruplar = data.gruplar.map((g: any) => {
+          const updatedDetaylar = (g.detaylar || []).map((u: any) => {
+            if (u.v1 === barcode) {
+              return { ...u, mf_baremleri: parsedBarems };
+            }
+            return u;
+          });
+          return { ...g, detaylar: updatedDetaylar };
+        });
+        setData({ ...data, gruplar: updatedGruplar });
+      }
+
+      alert(`Sorgulama tamamlandı! Baremler (Önbellekten): ${mfList.join(', ') || 'Barem bulunamadı'}`);
+      setMfQueryProduct(null);
+      return;
+    }
     
     const warehouseName = currentDepo.ad;
     let targetDomain = 'asecza.com.tr';
-    if (warehouseId === 'gek') targetDomain = 'gek.org.tr';
+    if (warehouseId === 'gek') targetDomain = 'esube.gek.org.tr';
     else if (warehouseId === 'alliance') targetDomain = 'alliance';
     else if (warehouseId === 'selcuk') targetDomain = 'selcukecza.com.tr';
     else if (warehouseId === 'nevzat') targetDomain = 'nevzatecza.com.tr';
@@ -4481,6 +4519,58 @@ export default function OrderCockpit() {
           (async function() {
             try {
               let token = window.__gekToken || ${JSON.stringify(localGekToken)} || "";
+              if (!token) {
+                const stores = [window.localStorage, window.sessionStorage];
+                const keys = ['token','Token','TOKEN','gek_token','gekToken','accessToken','access_token','auth_token','authToken','jwt','JWT'];
+                for (const store of stores) {
+                  if (token) break;
+                  if (!store) continue;
+                  for (const k of keys) {
+                    try {
+                      const v = store.getItem(k);
+                      if (v && v.length > 10 && !v.startsWith('{')) { token = v; break; }
+                      if (v && v.length > 10) {
+                        try { const j = JSON.parse(v); const t = j.token||j.Token||j.TOKEN||j.accessToken||j.access_token||j.currentSession?.access_token; if(t) { token = t; break; } } catch {}
+                      }
+                    } catch {}
+                  }
+                }
+              }
+              if (!token) {
+                try {
+                  const cookies = document.cookie.split(';');
+                  for (const c of cookies) {
+                    const [k, v] = c.trim().split('=');
+                    if (k && ['token','Token','TOKEN','auth','jwt'].some(kk => k.toLowerCase().includes(kk))) {
+                      if (v && v.length > 10) { token = decodeURIComponent(v); break; }
+                    }
+                  }
+                } catch {}
+              }
+              if (!token) {
+                try {
+                  const gtResp = await fetch('https://esube.gek.org.tr/MainService/api/rfc/gt', {
+                    method: 'GET',
+                    headers: { 'accept': 'application/json;charset=UTF-8' },
+                    credentials: 'include'
+                  });
+                  if (gtResp.ok) {
+                    const rawText = await gtResp.text();
+                    let t = null;
+                    try {
+                      const j = JSON.parse(rawText);
+                      t = j.token || j.Token || j.TOKEN || j.accessToken || j.access_token || j.data?.token || rawText.trim();
+                    } catch {
+                      t = rawText.trim();
+                    }
+                    if (t && t.length > 10) { token = t; }
+                  }
+                } catch {}
+              }
+              if (!token) return { error: 'login_required' };
+              
+              window.__gekToken = token;
+
               const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunArama", {
                 method: "POST",
                 headers: { "content-type": "application/json", "Authorization": "Bearer " + token },
@@ -4495,6 +4585,10 @@ export default function OrderCockpit() {
             } catch(e) { return { error: String(e) }; }
           })()
         `);
+        
+        if (queryResult && queryResult.error) {
+          throw new Error(queryResult.error === 'login_required' ? 'GEK oturumu zaman aşımına uğramış' : queryResult.error);
+        }
         
         if (queryResult && !queryResult.error) {
           const matnr = queryResult.matnr;
