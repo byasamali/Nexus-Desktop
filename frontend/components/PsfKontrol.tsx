@@ -660,7 +660,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const netList: string[] = [];
 
                     const kart = detailData?.EP_S_MALZEME_KARTI || {};
-                    tmpPsf = parseFloat(kart.PSF || detailData?.EP_T_PSF?.[0]?.PSF || detailData?.PSF || 0);
+                    tmpPsf = parseFloat(kart.PSF || kart.ZTVS_FIYATI || kart.TVS_FIYATI || detailData?.EP_T_PSF?.[0]?.PSF || detailData?.ZTVS_FIYATI || detailData?.TVS_FIYATI || detailData?.PSF || 0);
                     if (!tmpPsf) {
                         const conds = detailData?.ET_A004 || [];
                         const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
