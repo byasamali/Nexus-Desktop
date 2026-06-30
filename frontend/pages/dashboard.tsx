@@ -1684,17 +1684,27 @@ export default function OrderCockpit() {
             const detailData = queryResult.detailData;
             
             // Stok ve Fiyatları parse et
-            const conds = detailData?.ET_A004 || [];
-            const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
-            const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
+            const kart = detailData?.EP_S_MALZEME_KARTI || {};
+            let tmpPsf = parseFloat(kart.PSF || detailData?.EP_T_PSF?.[0]?.PSF || detailData?.PSF || 0);
+            if (!tmpPsf) {
+              const conds = detailData?.ET_A004 || [];
+              const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
+              if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
+              if (!tmpPsf && conds.length > 0) tmpPsf = parseFloat(conds[0]?.KBETR) || 0;
+            }
             
-            let tmpPsf = 0;
-            let tmpDsf = 0;
-            if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
-            if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
-            
-            if (!tmpPsf) tmpPsf = parseFloat(conds[0]?.KBETR) || parseFloat(detailData?.PSF) || 0;
-            if (!tmpDsf) tmpDsf = parseFloat(detailData?.DSF) || tmpPsf * 0.83;
+            let tmpDsf = parseFloat(kart.DSF || detailData?.DSF || 0);
+            if (!tmpDsf) {
+              const conds = detailData?.ET_A004 || [];
+              const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
+              if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
+            }
+            if (!tmpDsf && detailData?.EP_T_KLASM?.[0]) {
+              tmpDsf = parseFloat(detailData.EP_T_KLASM[0].DSF || detailData.EP_T_KLASM[0].BIRIMFIYAT || detailData.EP_T_KLASM[0].NETFIYAT || 0);
+            }
+            if (!tmpDsf) {
+              tmpDsf = tmpPsf * 0.83;
+            }
 
             psfVal = tmpPsf;
             dsfVal = tmpDsf;
@@ -3212,16 +3222,25 @@ export default function OrderCockpit() {
 
               const detailData = queryResult.detailData;
               const conds = detailData?.ET_A004 || [];
-              const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
-              const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
+              const kart = detailData?.EP_S_MALZEME_KARTI || {};
+              let tmpPsf = parseFloat(kart.PSF || detailData?.EP_T_PSF?.[0]?.PSF || detailData?.PSF || 0);
+              if (!tmpPsf) {
+                const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
+                if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
+                if (!tmpPsf && conds.length > 0) tmpPsf = parseFloat(conds[0]?.KBETR) || 0;
+              }
               
-              let tmpPsf = 0;
-              let tmpDsf = 0;
-              if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
-              if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
-              
-              if (!tmpPsf) tmpPsf = parseFloat(conds[0]?.KBETR) || parseFloat(detailData?.PSF) || 0;
-              if (!tmpDsf) tmpDsf = parseFloat(detailData?.DSF) || tmpPsf * 0.83;
+              let tmpDsf = parseFloat(kart.DSF || detailData?.DSF || 0);
+              if (!tmpDsf) {
+                const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
+                if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
+              }
+              if (!tmpDsf && detailData?.EP_T_KLASM?.[0]) {
+                tmpDsf = parseFloat(detailData.EP_T_KLASM[0].DSF || detailData.EP_T_KLASM[0].BIRIMFIYAT || detailData.EP_T_KLASM[0].NETFIYAT || 0);
+              }
+              if (!tmpDsf) {
+                tmpDsf = tmpPsf * 0.83;
+              }
 
               psfVal = tmpPsf;
               dsfVal = tmpDsf;

@@ -661,7 +661,25 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
 
                     const kart = detailData?.EP_S_MALZEME_KARTI || {};
                     tmpPsf = parseFloat(kart.PSF || detailData?.EP_T_PSF?.[0]?.PSF || detailData?.PSF || 0);
+                    if (!tmpPsf) {
+                        const conds = detailData?.ET_A004 || [];
+                        const zpsf = conds.find((c: any) => c.KSCHL === 'ZPSF' || c.KSCHL === 'Z002');
+                        if (zpsf) tmpPsf = parseFloat(zpsf.KBETR) || 0;
+                        if (!tmpPsf && conds.length > 0) tmpPsf = parseFloat(conds[0]?.KBETR) || 0;
+                    }
+                    
                     tmpDsf = parseFloat(kart.DSF || detailData?.DSF || 0);
+                    if (!tmpDsf) {
+                        const conds = detailData?.ET_A004 || [];
+                        const zdep = conds.find((c: any) => c.KSCHL === 'ZDEP' || c.KSCHL === 'Z001' || c.KSCHL === 'ZWHO');
+                        if (zdep) tmpDsf = parseFloat(zdep.KBETR) || 0;
+                    }
+                    if (!tmpDsf && detailData?.EP_T_KLASM?.[0]) {
+                        tmpDsf = parseFloat(detailData.EP_T_KLASM[0].DSF || detailData.EP_T_KLASM[0].BIRIMFIYAT || detailData.EP_T_KLASM[0].NETFIYAT || 0);
+                    }
+                    if (!tmpDsf) {
+                        tmpDsf = tmpPsf * 0.83;
+                    }
                     
                     if (detailData?.EP_S_VWERK?.STOK_MEVCUT === 'X') {
                         stokVal = parseInt(detailData?.EP_S_LIMIT?.KALAN_BAZ || 999);
