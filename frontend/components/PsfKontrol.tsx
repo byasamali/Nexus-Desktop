@@ -279,6 +279,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
     };
 
     const handleQuerySelected = async () => {
+        let hiddenWebview: any = null;
         const barcodesArray = selectedBarcodes.size > 0 
             ? Array.from(selectedBarcodes)
             : filteredNonPharmaData.map(item => item.barkod);
@@ -289,7 +290,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
         }
         
         let targetDomain = 'asecza.com.tr';
-        if (queryWarehouse === 'gek') targetDomain = 'gek.org.tr';
+        if (queryWarehouse === 'gek') targetDomain = 'esube.gek.org.tr';
         else if (queryWarehouse === 'alliance') targetDomain = 'alliance';
         else if (queryWarehouse === 'selcuk') targetDomain = 'selcukecza.com.tr';
         else if (queryWarehouse === 'nevzat') targetDomain = 'nevzatecza.com.tr';
@@ -541,10 +542,14 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                            const base = 'https://esube.gek.org.tr/MainService/api/rfc';
                            const h = { 'Accept': 'application/json;charset=UTF-8', 'Accept-Language': '', 'TOKEN': token, 'sln': '1' };
  
+                           // Oturum bağlamını kur (ud ve gs)
+                           await fetch(base + '/ud', { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                           await fetch(base + '/gs', { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+
                            // 1. Arama Hazırlığı (ss)
                            const ssUrl = base + '/mat/ss?ST=' + encodeURIComponent(${barcodeJson});
                            await fetch(ssUrl, { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
-
+ 
                            // 2. Arama
                            const searchUrl = base + '/mat/sm?ST=' + encodeURIComponent(${barcodeJson}) + '&TYP=3';
                            let searchResp = await fetch(searchUrl, {
