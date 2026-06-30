@@ -687,14 +687,23 @@ export default function OrderCockpit() {
   const [aiOnlyPharmaceuticalAndNoEquivalent, setAiOnlyPharmaceuticalAndNoEquivalent] = useState<boolean>(false);
   const [aiSkipMfQuery, setAiSkipMfQuery] = useState<boolean>(false);
   const [esdegerItem, setEsdegerItem] = useState<any>(null);
-  const [aiSimulationWarehouse, setAiSimulationWarehouse] = useState<string>('as_ecza');
+  const [aiSimulationWarehouse, setAiSimulationWarehouse] = useState<string>(() => {
+    const active = loadDepolar().filter(d => d.enabled !== false);
+    return active.length > 0 ? active[0].id : 'as_ecza';
+  });
 
   // ⚡ Acil Sipariş Modu State'leri
   const [showUrgentModal, setShowUrgentModal] = useState(false);
-  const [urgentWarehouse, setUrgentWarehouse] = useState<string>('as_ecza');
+  const [urgentWarehouse, setUrgentWarehouse] = useState<string>(() => {
+    const active = loadDepolar().filter(d => d.enabled !== false);
+    return active.length > 0 ? active[0].id : 'as_ecza';
+  });
   const [urgentSkipMfQuery, setUrgentSkipMfQuery] = useState<boolean>(false);
   const [mfQueryProduct, setMfQueryProduct] = useState<any>(null);
-  const [selectedMfWarehouse, setSelectedMfWarehouse] = useState<string>('as_ecza');
+  const [selectedMfWarehouse, setSelectedMfWarehouse] = useState<string>(() => {
+    const active = loadDepolar().filter(d => d.enabled !== false);
+    return active.length > 0 ? active[0].id : 'as_ecza';
+  });
   const [isSingleMfQuerying, setIsSingleMfQuerying] = useState<boolean>(false);
 
   const handleToggleAISelect = (barcode: string) => {

@@ -49,7 +49,10 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
     const [onlyShowDiff, setOnlyShowDiff] = useState(false);
 
     // Canlı sorgu state'leri
-    const [queryWarehouse, setQueryWarehouse] = useState<string>('as_ecza');
+    const [queryWarehouse, setQueryWarehouse] = useState<string>(() => {
+        const active = loadDepolar().filter(d => d.enabled !== false);
+        return active.length > 0 ? active[0].id : 'as_ecza';
+    });
     const [selectedBarcodes, setSelectedBarcodes] = useState<Set<string>>(new Set());
     const [queryProgress, setQueryProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
     const [isQuerying, setIsQuerying] = useState(false);
