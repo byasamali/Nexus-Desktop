@@ -1073,6 +1073,7 @@ export default function OrderCockpit() {
     try {
       const gln = data?.gln || 'local';
       const todayStr = new Date().toLocaleDateString('en-CA');
+      let cacheFile = '';
 
     // B. Her simülasyon öncesi değişen satırlar için tarama yapsın
     if (appSettings.scan_before_simulation) {
@@ -1184,7 +1185,7 @@ export default function OrderCockpit() {
         }
         
         // Ardından sorgu önbelleğini yükle
-        const cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : (aiSimulationWarehouse === 'alliance' ? 'alliance_query_cache.json' : (aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${aiSimulationWarehouse}_query_cache.json`));
+        cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : (aiSimulationWarehouse === 'alliance' ? 'alliance_query_cache.json' : (aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${aiSimulationWarehouse}_query_cache.json`));
         const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
         if (cacheStr && cacheStr !== '{}') {
           const legacyCache = JSON.parse(cacheStr);
@@ -2702,6 +2703,7 @@ export default function OrderCockpit() {
       const gln = data?.gln || 'local';
       const todayStr = new Date().toLocaleDateString('en-CA');
       const targetDaysLimit = urgentDaysLimit === 'aySonu' ? getDaysUntilMonthEnd() : urgentDaysLimit;
+      let cacheFile = '';
 
       if (appSettings.scan_before_simulation) {
         setSyncStatusMsg("Simülasyon öncesi değişen satırlar taranıyor...");
@@ -2787,7 +2789,7 @@ export default function OrderCockpit() {
             }
           }
           
-          const cacheFile = urgentWarehouse === 'gek' ? 'gek_query_cache.json' : (urgentWarehouse === 'alliance' ? 'alliance_query_cache.json' : (urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${urgentWarehouse}_query_cache.json`));
+          cacheFile = urgentWarehouse === 'gek' ? 'gek_query_cache.json' : (urgentWarehouse === 'alliance' ? 'alliance_query_cache.json' : (urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${urgentWarehouse}_query_cache.json`));
           const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
           if (cacheStr && cacheStr !== '{}') {
             const legacyCache = JSON.parse(cacheStr);
