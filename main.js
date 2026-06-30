@@ -172,6 +172,55 @@ ipcMain.handle('wails:SaveLocalJSON', async (event, gln, filename, content) => {
   }
 });
 
+ipcMain.handle('wails:SaveLocalBase64File', async (event, gln, filename, base64Data) => {
+  try {
+    const tenantDir = path.join(pythonDir, 'tenants', gln);
+    if (!fs.existsSync(tenantDir)) {
+      fs.mkdirSync(tenantDir, { recursive: true });
+    }
+    const filePath = path.join(tenantDir, path.basename(filename));
+    const base64Content = base64Data.replace(/^data:.*?;base64,/, "");
+    fs.writeFileSync(filePath, Buffer.from(base64Content, 'base64'));
+    console.log(`[Base64 File] Saved: ${filePath}`);
+    return 'File saved successfully';
+  } catch (err) {
+    console.error('Error saving base64 file:', err);
+    throw err;
+  }
+});
+
+ipcMain.handle('wails:ParseSelcukCampaigns', async (event, gln) => {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(pythonDir, 'parse_selcuk_campaigns.py');
+    let pythonProcess;
+    if (fs.existsSync(pythonVenvPython)) {
+      pythonProcess = spawn(pythonVenvPython, [scriptPath, '--gln', gln]);
+    } else {
+      pythonProcess = spawn('python', [scriptPath, '--gln', gln]);
+    }
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString('utf8');
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString('utf8');
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`parse_selcuk_campaigns.py failed with code ${code}. Stderr: ${stderrData}`);
+        reject(new Error(stderrData || `Exit code ${code}`));
+        return;
+      }
+      resolve(stdoutData.trim());
+    });
+  });
+});
+
 ipcMain.handle('wails:AppendOrderResult', async (event, gln, entry) => {
   try {
     const tenantDir = path.join(pythonDir, 'tenants', gln);

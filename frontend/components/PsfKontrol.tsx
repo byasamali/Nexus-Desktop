@@ -6,6 +6,62 @@ import { isPharmaceuticalCategory, categoryMap } from '@/lib/categoryMap';
 import { cn } from '@/lib/utils';
 import { loadDepolar } from '@/components/Depolar';
 
+function getCacheKey(depoId: string): string {
+  if (!depoId) return 'UNKNOWN';
+  const id = depoId.toLowerCase();
+  if (id === 'as' || id === 'as_ecza') return 'AS_ECZA';
+  return id.toUpperCase();
+}
+
+async function loadAndMigrateCache(gln: string): Promise<any> {
+  const tenantGln = gln || 'local';
+  try {
+    const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
+    if (rawCombined && rawCombined !== '{}') {
+      const parsed = JSON.parse(rawCombined);
+      const firstKey = Object.keys(parsed)[0];
+      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
+        return parsed;
+      }
+    }
+  } catch (err) {}
+
+  const combined: any = {};
+  const oldFiles = [
+    { file: 'selcuk_query_cache.json', key: 'SELCUK' },
+    { file: 'as_ecza_query_cache.json', key: 'AS_ECZA' },
+    { file: 'gek_query_cache.json', key: 'GEK' },
+    { file: 'alliance_query_cache.json', key: 'ALLIANCE' },
+    { file: 'nevzat_query_cache.json', key: 'NEVZAT' },
+    { file: 'cam_query_cache.json', key: 'CAM' }
+  ];
+
+  for (const item of oldFiles) {
+    try {
+      const raw = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, item.file);
+      if (raw && raw !== '{}') {
+        const data = JSON.parse(raw);
+        for (const [barcode, entry] of Object.entries(data)) {
+          if (!combined[barcode]) combined[barcode] = {};
+          if (entry && typeof entry === 'object') {
+            combined[barcode][item.key] = {
+              ...(entry as any),
+              depo: (entry as any).depo || item.key
+            };
+          }
+        }
+      }
+    } catch (err) {}
+  }
+
+  if (Object.keys(combined).length > 0) {
+    try {
+      await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(combined, null, 2));
+    } catch (err) {}
+  }
+  return combined;
+}
+
 interface PsfKontrolProps {
     data: any;
     gln: string;
@@ -118,46 +174,27 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                         }
                     }
 
-                    // 3. Load AS query cache
-                    const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, "as_ecza_query_cache.json");
-                    if (cacheStr && cacheStr !== '{}') {
-                        const legacyCache = JSON.parse(cacheStr);
-                        Object.keys(legacyCache).forEach(barcode => {
-                            mergedCache[barcode] = {
-                                fiyat_etiket: legacyCache[barcode].fiyat_etiket || 0,
-                                fiyat_depocu: legacyCache[barcode].fiyat_depocu || 0,
-                                date: legacyCache[barcode].date || '',
-                                depo: legacyCache[barcode].depo || 'AS ECZA'
-                            };
+                    // 3. Load combined query cache
+                    try {
+                        const globalCache = await loadAndMigrateCache(gln);
+                        Object.keys(globalCache).forEach(barcode => {
+                            const entryObj = globalCache[barcode];
+                            if (entryObj && typeof entryObj === 'object') {
+                                Object.keys(entryObj).forEach(depoKey => {
+                                    const info = entryObj[depoKey];
+                                    if (info) {
+                                        mergedCache[barcode] = {
+                                            fiyat_etiket: info.fiyat_etiket || 0,
+                                            fiyat_depocu: info.fiyat_depocu || 0,
+                                            date: info.date || '',
+                                            depo: info.depo || depoKey
+                                        };
+                                    }
+                                });
+                            }
                         });
-                    }
-
-                    // 4. Load GEK query cache
-                    const gekCacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, "gek_query_cache.json");
-                    if (gekCacheStr && gekCacheStr !== '{}') {
-                        const legacyGekCache = JSON.parse(gekCacheStr);
-                        Object.keys(legacyGekCache).forEach(barcode => {
-                            mergedCache[barcode] = {
-                                fiyat_etiket: legacyGekCache[barcode].fiyat_etiket || legacyGekCache[barcode].fiyat_etiket_live || 0,
-                                fiyat_depocu: legacyGekCache[barcode].fiyat_depocu || legacyGekCache[barcode].fiyat_depocu_live || 0,
-                                date: legacyGekCache[barcode].date || '',
-                                depo: legacyGekCache[barcode].depo || 'GEK'
-                            };
-                        });
-                    }
-
-                    // 5. Load Alliance query cache
-                    const allianceCacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, "alliance_query_cache.json");
-                    if (allianceCacheStr && allianceCacheStr !== '{}') {
-                        const legacyAllianceCache = JSON.parse(allianceCacheStr);
-                        Object.keys(legacyAllianceCache).forEach(barcode => {
-                            mergedCache[barcode] = {
-                                fiyat_etiket: legacyAllianceCache[barcode].fiyat_etiket || 0,
-                                fiyat_depocu: legacyAllianceCache[barcode].fiyat_depocu || 0,
-                                date: legacyAllianceCache[barcode].date || '',
-                                depo: legacyAllianceCache[barcode].depo || 'Alliance'
-                            };
-                        });
+                    } catch (err) {
+                        console.error("[PSF Kontrol] Birleşik önbellek yüklenirken hata:", err);
                     }
                 }
             } catch (e) {
@@ -369,15 +406,9 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
         const total = barcodesArray.length;
 
         // Önbelleği yükle
-        const cacheFilename = queryWarehouse === 'gek' ? "gek_query_cache.json" : queryWarehouse === 'alliance' ? "alliance_query_cache.json" : (queryWarehouse === 'as' || queryWarehouse === 'as_ecza' ? "as_ecza_query_cache.json" : `${queryWarehouse}_query_cache.json`);
         let cache: Record<string, any> = {};
         try {
-            if ((window as any).go?.main?.App?.LoadLocalJSON) {
-                const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFilename);
-                if (cacheStr && cacheStr !== '{}') {
-                    cache = JSON.parse(cacheStr);
-                }
-            }
+            cache = await loadAndMigrateCache(gln);
         } catch (e) {
             console.error("Cache load failed", e);
         }
@@ -699,7 +730,11 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const dsfVal = tmpDsf;
                     const psfVal = tmpPsf;
 
-                    cache[barcode] = {
+                    const cacheKey = getCacheKey(queryWarehouse);
+                    if (!cache[barcode]) {
+                        cache[barcode] = {};
+                    }
+                    cache[barcode][cacheKey] = {
                         date: todayStr,
                         stok: stokVal,
                         fiyat_depocu: dsfVal,
@@ -711,7 +746,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     };
 
                     if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                        await (window as any).go.main.App.SaveLocalJSON(gln, cacheFilename, JSON.stringify(cache));
+                        await (window as any).go.main.App.SaveLocalJSON(gln, "query_cache.json", JSON.stringify(cache));
                     }
 
                     // SQLite veritabanını güncelle
@@ -878,7 +913,11 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const mfList: string[] = [];
                     const netList: string[] = [];
 
-                    cache[barcode] = {
+                    const cacheKey = getCacheKey(queryWarehouse);
+                    if (!cache[barcode]) {
+                        cache[barcode] = {};
+                    }
+                    cache[barcode][cacheKey] = {
                         date: todayStr,
                         stok: stokVal,
                         fiyat_depocu: dsfVal,
@@ -890,7 +929,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     };
 
                     if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                        await (window as any).go.main.App.SaveLocalJSON(gln, cacheFilename, JSON.stringify(cache));
+                        await (window as any).go.main.App.SaveLocalJSON(gln, "query_cache.json", JSON.stringify(cache));
                     }
 
                     // SQLite veritabanını güncelle
@@ -1048,7 +1087,11 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const dsfVal = parsePrice(detail.depocuFiyati);
                     const psfVal = parsePrice(detail.tavsiyeEdilenSatisFiyati || detail.SonFiyat || detail.etiketFiyati);
 
-                    cache[barcode] = {
+                    const cacheKey = getCacheKey(queryWarehouse);
+                    if (!cache[barcode]) {
+                        cache[barcode] = {};
+                    }
+                    cache[barcode][cacheKey] = {
                         date: todayStr,
                         stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
                         fiyat_depocu: dsfVal,
@@ -1060,7 +1103,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     };
 
                     if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                        await (window as any).go.main.App.SaveLocalJSON(gln, cacheFilename, JSON.stringify(cache));
+                        await (window as any).go.main.App.SaveLocalJSON(gln, "query_cache.json", JSON.stringify(cache));
                         await (window as any).go.main.App.SaveLocalJSON(gln, "son_sorgu_ham_veri.json", JSON.stringify({
                             barkod: barcode,
                             urun_adi: name,

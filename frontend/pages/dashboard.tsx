@@ -50,6 +50,74 @@ import {
   type Category,
 } from '@/lib/categoryMap';
 
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center border-2 border-dashed border-stone-200 rounded-2xl bg-white/60">
+      <div className="h-12 w-12 bg-stone-100 rounded-2xl flex items-center justify-center mb-3">
+        <Package size={22} className="text-stone-300" />
+      </div>
+      <p className="text-sm font-bold text-stone-600">Gösterilecek ürün yok</p>
+      <p className="text-xs text-stone-400 font-medium mt-1">Harika! Şu an bir eksik görünmüyor.</p>
+    </div>
+  );
+}
+
+function getCacheKey(depoId: string): string {
+  if (!depoId) return 'UNKNOWN';
+  const id = depoId.toLowerCase();
+  if (id === 'as' || id === 'as_ecza') return 'AS_ECZA';
+  return id.toUpperCase();
+}
+
+async function loadAndMigrateCache(gln: string): Promise<any> {
+  const tenantGln = gln || 'local';
+  try {
+    const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
+    if (rawCombined && rawCombined !== '{}') {
+      const parsed = JSON.parse(rawCombined);
+      const firstKey = Object.keys(parsed)[0];
+      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
+        return parsed;
+      }
+    }
+  } catch (err) {}
+
+  const combined: any = {};
+  const oldFiles = [
+    { file: 'selcuk_query_cache.json', key: 'SELCUK' },
+    { file: 'as_ecza_query_cache.json', key: 'AS_ECZA' },
+    { file: 'gek_query_cache.json', key: 'GEK' },
+    { file: 'alliance_query_cache.json', key: 'ALLIANCE' },
+    { file: 'nevzat_query_cache.json', key: 'NEVZAT' },
+    { file: 'cam_query_cache.json', key: 'CAM' }
+  ];
+
+  for (const item of oldFiles) {
+    try {
+      const raw = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, item.file);
+      if (raw && raw !== '{}') {
+        const data = JSON.parse(raw);
+        for (const [barcode, entry] of Object.entries(data)) {
+          if (!combined[barcode]) combined[barcode] = {};
+          if (entry && typeof entry === 'object') {
+            combined[barcode][item.key] = {
+              ...(entry as any),
+              depo: (entry as any).depo || item.key
+            };
+          }
+        }
+      }
+    } catch (err) {}
+  }
+
+  if (Object.keys(combined).length > 0) {
+    try {
+      await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(combined, null, 2));
+    } catch (err) {}
+  }
+  return combined;
+}
+
 // Scrollbar CSS + Inter font
 const scrollbarStyles = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
@@ -1194,13 +1262,13 @@ export default function OrderCockpit() {
         }
         
         // Ardından sorgu önbelleğini yükle
-        cacheFile = aiSimulationWarehouse === 'gek' ? 'gek_query_cache.json' : (aiSimulationWarehouse === 'alliance' ? 'alliance_query_cache.json' : (aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${aiSimulationWarehouse}_query_cache.json`));
-        const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
-        if (cacheStr && cacheStr !== '{}') {
-          const legacyCache = JSON.parse(cacheStr);
+        try {
+          const legacyCache = await loadAndMigrateCache(gln);
           Object.keys(legacyCache).forEach(barcode => {
             cache[barcode] = legacyCache[barcode];
           });
+        } catch (e) {
+          console.log("[AI Order] Önbellek yüklenemedi:", e);
         }
       }
     } catch (e) {
@@ -1442,7 +1510,8 @@ export default function OrderCockpit() {
         const rawNeed = groupDailySpeed * aiTargetDays - currentGroupStock;
         const need = Math.max(0, Math.ceil(rawNeed));
 
-        const cached = cache[barcode];
+        const cacheKey = getCacheKey(aiSimulationWarehouse);
+        const cached = cache[barcode] ? (cache[barcode][cacheKey] || (cache[barcode].date ? cache[barcode] : undefined)) : undefined;
         let detail: any = null;
         let mfList: string[] = [];
         let netList: string[] = [];
@@ -1451,7 +1520,7 @@ export default function OrderCockpit() {
         let isFromCache = false;
 
         // Kriter 4: Bir gün içinde bir barkod depodan sadece bir kez sorgulanabilir.
-        if (cached && cached.date === todayStr) {
+        if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
           isFromCache = true;
           dsfVal = cached.fiyat_depocu;
           psfVal = cached.fiyat_etiket;
@@ -2817,13 +2886,13 @@ export default function OrderCockpit() {
             }
           }
           
-          cacheFile = urgentWarehouse === 'gek' ? 'gek_query_cache.json' : (urgentWarehouse === 'alliance' ? 'alliance_query_cache.json' : (urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${urgentWarehouse}_query_cache.json`));
-          const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
-          if (cacheStr && cacheStr !== '{}') {
-            const legacyCache = JSON.parse(cacheStr);
+          try {
+            const legacyCache = await loadAndMigrateCache(gln);
             Object.keys(legacyCache).forEach(barcode => {
               cache[barcode] = legacyCache[barcode];
             });
+          } catch (e) {
+            console.log("[Urgent Order] Önbellek yüklenemedi:", e);
           }
         }
       } catch (e) {
@@ -2949,8 +3018,9 @@ export default function OrderCockpit() {
           // ── SKIP MODE: depodan sorgu yapma, bellekte varsa kullan ──────────────
           if (urgentSkipMfQuery) {
             setUrgentProgress(`Simüle ediliyor [${i + 1}/${productsToQuery.length}]: ${name}`);
-            const cachedEntry = cache[barcode];
-            const isFromCache = !!(cachedEntry && cachedEntry.date === todayStr);
+            const urgentCacheKey = getCacheKey(urgentWarehouse);
+            const cachedEntry = cache[barcode] ? (cache[barcode][urgentCacheKey] || (cache[barcode].date ? cache[barcode] : undefined)) : undefined;
+            const isFromCache = !!(cachedEntry && cachedEntry.date >= todayStr && (!cachedEntry.start_date || cachedEntry.start_date <= todayStr));
             const dsfSkip  = isFromCache ? (cachedEntry.fiyat_depocu || 0) : 0;
             const psfSkip  = isFromCache ? (cachedEntry.fiyat_etiket || 0) : 0;
             const mfSkip   = isFromCache ? (cachedEntry.mf_baremleri  || []) : [];
@@ -3013,7 +3083,8 @@ export default function OrderCockpit() {
           }
           // ── END SKIP MODE ────────────────────────────────────────────────────────
 
-          const cached = cache[barcode];
+          const urgentCacheKey = getCacheKey(urgentWarehouse);
+          const cached = cache[barcode] ? (cache[barcode][urgentCacheKey] || (cache[barcode].date ? cache[barcode] : undefined)) : undefined;
           let detail: any = null;
           let mfList: string[] = [];
           let netList: string[] = [];
@@ -3021,7 +3092,7 @@ export default function OrderCockpit() {
           let psfVal = 0;
           let isFromCache = false;
 
-          if (cached && cached.date === todayStr) {
+          if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
             isFromCache = true;
             dsfVal = cached.fiyat_depocu;
             psfVal = cached.fiyat_etiket;
@@ -4483,15 +4554,14 @@ export default function OrderCockpit() {
 
     const barcode = urun.v1;
     const todayStr = new Date().toLocaleDateString('en-CA');
-    const cacheFilename = warehouseId === 'gek' ? 'gek_query_cache.json' : (warehouseId === 'alliance' ? 'alliance_query_cache.json' : (warehouseId === 'as' || warehouseId === 'as_ecza' ? 'as_ecza_query_cache.json' : `${warehouseId}_query_cache.json`));
     let cache: any = {};
     try {
-      const rawCache = await (window as any).go.main.App.LoadLocalJSON(data?.gln || 'local', cacheFilename);
-      if (rawCache && rawCache !== '{}') cache = JSON.parse(rawCache);
+      cache = await loadAndMigrateCache(data?.gln || 'local');
     } catch {}
 
-    const cached = cache[barcode];
-    if (cached && cached.date === todayStr) {
+    const cacheKey = getCacheKey(warehouseId);
+    const cached = cache[barcode]?.[cacheKey];
+    if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
       const mfList = cached.mf_baremleri || [];
       const parsedBarems = mfList.map((raw: string) => {
         const p = raw.split('+');
@@ -4791,13 +4861,15 @@ export default function OrderCockpit() {
       }).filter(b => b.ana > 0 && b.mf > 0);
 
       const todayStr = new Date().toLocaleDateString('en-CA');
-      const cacheFilename = warehouseId === 'gek' ? 'gek_query_cache.json' : (warehouseId === 'alliance' ? 'alliance_query_cache.json' : 'as_ecza_query_cache.json');
       let cache: any = {};
       try {
-        const rawCache = await (window as any).go.main.App.LoadLocalJSON(data?.gln || 'local', cacheFilename);
-        if (rawCache && rawCache !== '{}') cache = JSON.parse(rawCache);
+        cache = await loadAndMigrateCache(data?.gln || 'local');
       } catch {}
-      cache[barcode] = {
+      const cacheKey = getCacheKey(warehouseId);
+      if (!cache[barcode]) {
+        cache[barcode] = {};
+      }
+      cache[barcode][cacheKey] = {
         date: todayStr,
         stok: 1,
         fiyat_depocu: dsfVal,
@@ -4806,7 +4878,7 @@ export default function OrderCockpit() {
         net_fiyatlar: netList,
         kod: ''
       };
-      await (window as any).go.main.App.SaveLocalJSON(data?.gln || 'local', cacheFilename, JSON.stringify(cache, null, 2));
+      await (window as any).go.main.App.SaveLocalJSON(data?.gln || 'local', 'query_cache.json', JSON.stringify(cache, null, 2));
 
       if (data && Array.isArray(data.gruplar)) {
         const updatedGruplar = data.gruplar.map((g: any) => {
@@ -4850,6 +4922,11 @@ export default function OrderCockpit() {
           onSearchProcessed={() => setPendingDepoSearch(null)}
           onGoToSettings={() => setActiveTab('ayarlar')}
           isActive={isDepolarTab}
+          onRemoveFromCart={(barkod: string) => setCart(prev => {
+            const next = { ...prev };
+            if (next[barkod]) next[barkod] = { ...next[barkod], inCart: false, qty: 0 };
+            return next;
+          })}
         />
       </div>
 
@@ -5321,7 +5398,7 @@ export default function OrderCockpit() {
                     onOpenProductAnalysis={handleOpenProductAnalysis}
                   />
                 )}
-                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} data={data} webviewRefs={sharedWebviewRefs} />}
+                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} data={data} webviewRefs={sharedWebviewRefs} onOpenProductAnalysis={handleOpenProductAnalysis} />}
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}

@@ -5,7 +5,7 @@ import {
   Globe, Plus, X, Eye, EyeOff, Trash2,
   Copy, Check, ExternalLink, RefreshCw,
   ShoppingCart, Store, Lock, User, Link2,
-  Search, ArrowLeft, ArrowRight, Truck, Settings
+  Search, ArrowLeft, ArrowRight, Truck, Settings, Download
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -208,6 +208,62 @@ export function ensureHttp(url: string) {
   return 'https://' + url;
 }
 
+export function getCacheKey(depoId: string): string {
+  if (!depoId) return 'UNKNOWN';
+  const id = depoId.toLowerCase();
+  if (id === 'as' || id === 'as_ecza') return 'AS_ECZA';
+  return id.toUpperCase();
+}
+
+export async function loadAndMigrateCache(gln: string): Promise<any> {
+  const tenantGln = gln || 'local';
+  try {
+    const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
+    if (rawCombined && rawCombined !== '{}') {
+      const parsed = JSON.parse(rawCombined);
+      const firstKey = Object.keys(parsed)[0];
+      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
+        return parsed;
+      }
+    }
+  } catch (err) {}
+
+  const combined: any = {};
+  const oldFiles = [
+    { file: 'selcuk_query_cache.json', key: 'SELCUK' },
+    { file: 'as_ecza_query_cache.json', key: 'AS_ECZA' },
+    { file: 'gek_query_cache.json', key: 'GEK' },
+    { file: 'alliance_query_cache.json', key: 'ALLIANCE' },
+    { file: 'nevzat_query_cache.json', key: 'NEVZAT' },
+    { file: 'cam_query_cache.json', key: 'CAM' }
+  ];
+
+  for (const item of oldFiles) {
+    try {
+      const raw = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, item.file);
+      if (raw && raw !== '{}') {
+        const data = JSON.parse(raw);
+        for (const [barcode, entry] of Object.entries(data)) {
+          if (!combined[barcode]) combined[barcode] = {};
+          if (entry && typeof entry === 'object') {
+            combined[barcode][item.key] = {
+              ...(entry as any),
+              depo: (entry as any).depo || item.key
+            };
+          }
+        }
+      }
+    } catch (err) {}
+  }
+
+  if (Object.keys(combined).length > 0) {
+    try {
+      await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(combined, null, 2));
+    } catch (err) {}
+  }
+  return combined;
+}
+
 /** HTML içindeki <span> taglarını parse eder (MF verisi için) */
 function extractSpans(html: string): string[] {
   if (!html) return [];
@@ -353,6 +409,7 @@ function MiniSepet({
   bulkQueryLoading,
   onBulkQuery,
   activeDepoAd = 'Aktif Depo',
+  onRemoveFromCart,
 }: {
   cart: Record<string, CartItem>;
   onBarcodeDoubleClick?: (barcode: string) => void;
@@ -360,17 +417,23 @@ function MiniSepet({
   bulkQueryLoading?: boolean;
   onBulkQuery?: () => void;
   activeDepoAd?: string;
+  onRemoveFromCart?: (barkod: string) => void;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [sortByQty, setSortByQty] = useState(false);
 
-  const cartItems = Object.entries(cart)
+  const baseCartItems = Object.entries(cart)
     .filter(([, v]) => v.inCart && v.qty > 0)
     .filter(([barkod, v]) =>
       search === '' ||
       v.ad.toLowerCase().includes(search.toLowerCase()) ||
       barkod.includes(search)
     );
+
+  const cartItems = sortByQty
+    ? [...baseCartItems].sort(([, a], [, b]) => b.qty - a.qty)
+    : baseCartItems;
 
   const totalKutu = cartItems.reduce((a, [, v]) => a + v.qty, 0);
 
@@ -404,22 +467,36 @@ function MiniSepet({
               </p>
             </div>
           </div>
-          {cartItems.length > 0 && onBulkQuery && (
+          <div className="flex items-center gap-1">
             <button
-              onClick={onBulkQuery}
-              disabled={bulkQueryLoading}
+              onClick={() => setSortByQty(s => !s)}
+              title={sortByQty ? "Sıralamayı kaldır" : "Kutu sayısına göre sırala"}
               className={cn(
                 "flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0",
-                bulkQueryLoading
-                  ? "bg-stone-50 border-stone-200 text-stone-400 cursor-not-allowed"
-                  : "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700 active:scale-95"
+                sortByQty
+                  ? "bg-teal-600 border-teal-700 text-white"
+                  : "bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-500"
               )}
-              title={`Sepetteki tüm ürünleri ${activeDepoAd} üzerinden sorgular`}
             >
-              <RefreshCw size={10} className={cn("text-teal-600", bulkQueryLoading && "animate-spin")} />
-              {bulkQueryLoading ? "Sorgulanıyor..." : "Toplu Sorgula"}
+              {sortByQty ? "▼" : "⇅"} Kutu
             </button>
-          )}
+            {cartItems.length > 0 && onBulkQuery && (
+              <button
+                onClick={onBulkQuery}
+                disabled={bulkQueryLoading}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0",
+                  bulkQueryLoading
+                    ? "bg-stone-50 border-stone-200 text-stone-400 cursor-not-allowed"
+                    : "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700 active:scale-95"
+                )}
+                title={`Sepetteki tüm ürünleri ${activeDepoAd} üzerinden sorgular`}
+              >
+                <RefreshCw size={10} className={cn("text-teal-600", bulkQueryLoading && "animate-spin")} />
+                {bulkQueryLoading ? "Sorgulanıyor..." : "Toplu Sorgula"}
+              </button>
+            )}
+          </div>
         </div>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-stone-400" />
@@ -447,16 +524,27 @@ function MiniSepet({
                const res = bulkQueryResult?.[barkod];
                return (
                  <div key={barkod} className="group px-3 py-2.5 hover:bg-stone-50/80 transition-colors">
-                   <button onClick={() => copyText(firstName, `ad-${barkod}`)}
-                     title={`"${firstName}" kopyala`}
-                     className="w-full text-left mb-1 flex items-start gap-1.5 group/ad">
-                     <span className={cn("text-[11px] font-semibold leading-tight flex-1 transition-colors",
-                       isCA ? "text-teal-600" : "text-stone-800 group-hover/ad:text-teal-700")}>
-                       {item.ad}
-                     </span>
-                     {isCA ? <Check size={10} className="text-teal-500 shrink-0 mt-0.5" />
-                       : <Copy size={9} className="text-stone-300 group-hover/ad:text-teal-400 shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-all" />}
-                   </button>
+                   <div className="flex items-start gap-1.5 mb-1">
+                     <button onClick={() => copyText(firstName, `ad-${barkod}`)}
+                       title={`"${firstName}" kopyala`}
+                       className="flex-1 text-left flex items-start gap-1 group/ad min-w-0">
+                       <span className={cn("text-[11px] font-semibold leading-tight flex-1 truncate transition-colors",
+                         isCA ? "text-teal-600" : "text-stone-800 group-hover/ad:text-teal-700")}>
+                         {item.ad}
+                       </span>
+                       {isCA ? <Check size={10} className="text-teal-500 shrink-0 mt-0.5" />
+                         : <Copy size={9} className="text-stone-300 group-hover/ad:text-teal-400 shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-all" />}
+                     </button>
+                     {onRemoveFromCart && (
+                       <button
+                         onClick={() => onRemoveFromCart(barkod)}
+                         title="Sepetten çıkar"
+                         className="shrink-0 opacity-0 group-hover:opacity-100 transition-all text-stone-300 hover:text-red-500 hover:bg-red-50 rounded p-0.5 mt-0.5"
+                       >
+                         <Trash2 size={11} />
+                       </button>
+                     )}
+                   </div>
                    <div className="flex items-center justify-between gap-2">
                      <button
                        onClick={() => copyText(barkod, `barkod-${barkod}`)}
@@ -632,7 +720,9 @@ function DepoCard({ depo, onOpen, onEdit, onDelete }: {
         {depo.ad.slice(0, 2).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-[12px] font-black text-stone-900 truncate">{depo.ad}</p>
+        <CredentialTooltip depo={depo} trigger={
+          <p className="text-[12px] font-black text-stone-900 truncate hover:text-teal-600 transition-colors cursor-default">{depo.ad}</p>
+        } />
         <p className="text-[10px] text-stone-400 font-medium truncate mt-0.5">{depo.url}</p>
         {(depo.kullanici || depo.kod) && (
           <p className="text-[10px] text-stone-400 truncate">
@@ -650,6 +740,116 @@ function DepoCard({ depo, onOpen, onEdit, onDelete }: {
     </div>
   );
 }
+// ── Credential Tooltip ───────────────────────────────────────────────────────
+
+function CredentialTooltip({ depo, trigger }: { depo: any; trigger: React.ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showPass, setShowPass] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const show = () => { if (hideTimer.current) clearTimeout(hideTimer.current); setVisible(true); };
+  const hide = () => { hideTimer.current = setTimeout(() => setVisible(false), 120); };
+
+  const copyField = async (value: string, key: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!value) return;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const el = document.createElement('textarea');
+        el.value = value;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+      }
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 1800);
+    } catch {}
+  };
+
+  const hasAny = depo.kullanici || depo.kod || depo.sifre;
+
+  return (
+    <div className="relative" onMouseEnter={show} onMouseLeave={hide}>
+      {trigger}
+      {visible && (
+        <div
+          className="absolute top-full left-0 mt-1.5 flex flex-col bg-stone-950 text-white rounded-xl shadow-2xl border border-stone-800 p-3 z-[9999] min-w-[210px] text-[10px] space-y-1.5"
+          onMouseEnter={show}
+          onMouseLeave={hide}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-1.5 border-b border-stone-800 pb-2 mb-0.5">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: depo.renk || '#94a3b8' }} />
+            <span className="font-black text-stone-200 text-[11px]">{depo.ad}</span>
+            <span className="ml-auto text-stone-600 text-[9px]">giriş bilgileri</span>
+          </div>
+          {!hasAny && (
+            <p className="text-stone-500 italic text-[10px] text-center py-1">Bilgi girilmemiş</p>
+          )}
+          {depo.kullanici && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-stone-500 font-medium shrink-0">Kullanıcı:</span>
+              <button
+                onClick={(e) => copyField(depo.kullanici, 'kullanici', e)}
+                className="flex items-center gap-1 font-mono font-bold text-stone-300 hover:text-teal-400 transition-colors max-w-[130px] text-right"
+                title="Tıkla: kopyala"
+              >
+                <span className="truncate">{depo.kullanici}</span>
+                {copiedKey === 'kullanici'
+                  ? <Check size={9} className="text-teal-400 shrink-0" />
+                  : <Copy size={9} className="text-stone-600 shrink-0" />}
+              </button>
+            </div>
+          )}
+          {depo.kod && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-stone-500 font-medium shrink-0">Kod:</span>
+              <button
+                onClick={(e) => copyField(depo.kod, 'kod', e)}
+                className="flex items-center gap-1 font-mono font-bold text-stone-300 hover:text-teal-400 transition-colors max-w-[130px] text-right"
+                title="Tıkla: kopyala"
+              >
+                <span className="truncate">{depo.kod}</span>
+                {copiedKey === 'kod'
+                  ? <Check size={9} className="text-teal-400 shrink-0" />
+                  : <Copy size={9} className="text-stone-600 shrink-0" />}
+              </button>
+            </div>
+          )}
+          {depo.sifre && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-stone-500 font-medium shrink-0">Şifre:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={(e) => copyField(depo.sifre, 'sifre', e)}
+                  className="flex items-center gap-1 font-mono font-bold text-stone-300 hover:text-teal-400 transition-colors max-w-[110px] text-right"
+                  title="Tıkla: kopyala"
+                >
+                  <span className="truncate">{showPass ? depo.sifre : '•'.repeat(Math.min(depo.sifre.length, 10))}</span>
+                  {copiedKey === 'sifre'
+                    ? <Check size={9} className="text-teal-400 shrink-0" />
+                    : <Copy size={9} className="text-stone-600 shrink-0" />}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowPass(s => !s); }}
+                  className="text-stone-600 hover:text-stone-300 transition-colors ml-0.5 shrink-0"
+                  title={showPass ? 'Gizle' : 'Göster'}
+                >
+                  {showPass ? <EyeOff size={9} /> : <Eye size={9} />}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 const getAutofillScript = (depo: any, autoSubmit = false) => {
   const code = (depo.kod || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
@@ -818,7 +1018,8 @@ const getAutofillScript = (depo: any, autoSubmit = false) => {
 // ── Tarayıcı Paneli (proxy-destekli webview) ─────────────────────────────────
 
 function BrowserPanel({
-  tabs, activeTabId, onTabChange, onTabClose, onTabAdd, onNavigate, preloadPath, onIpcMessage, pendingSearch, onSearchProcessed, pendingOrder, onOrderProcessed, onOrderResult, webviewRefs: extWebviewRefs, depolar
+  tabs, activeTabId, onTabChange, onTabClose, onTabAdd, onNavigate, preloadPath, onIpcMessage, pendingSearch, onSearchProcessed, pendingOrder, onOrderProcessed, onOrderResult, webviewRefs: extWebviewRefs, depolar,
+  onImportSelcukCampaigns, importingCampaigns
 }: {
   tabs: BrowserTab[];
   activeTabId: string;
@@ -835,6 +1036,8 @@ function BrowserPanel({
   onOrderResult: (result: OrderResult) => void;
   webviewRefs?: React.MutableRefObject<Record<string, any>>;
   depolar: Depo[];
+  onImportSelcukCampaigns?: () => void;
+  importingCampaigns?: boolean;
 }) {
   const [addressBar, setAddressBar] = useState('');
   const depolarRef = useRef(depolar);
@@ -1190,6 +1393,24 @@ function BrowserPanel({
           className="p-1.5 rounded-lg hover:bg-stone-100 text-stone-400 hover:text-stone-700 transition-colors" title="Dışarıda aç">
           <ExternalLink size={14} />
         </button>
+
+        {/* Selçuk Ecza Kampanya İndirme Butonu */}
+        {(activeTab?.displayUrl?.includes('selcukecza.com.tr') || activeTab?.proxyUrl?.includes('selcukecza') || activeTab?.depoId === 'selcuk') && onImportSelcukCampaigns && (
+          <button
+            onClick={onImportSelcukCampaigns}
+            disabled={importingCampaigns}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all border shrink-0",
+              importingCampaigns
+                ? "bg-stone-50 border-stone-200 text-stone-400 cursor-not-allowed"
+                : "bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 active:scale-95 shadow-sm"
+            )}
+            title="Selçuk Ecza güncel kampanya Excel listesini indirir ve önbelleğe (query_cache) kaydeder."
+          >
+            <Download size={12} className={cn("text-blue-600", importingCampaigns && "animate-spin")} />
+            {importingCampaigns ? "Yükleniyor..." : "Kampanyaları Yükle"}
+          </button>
+        )}
       </div>
 
 
@@ -1270,7 +1491,7 @@ function BrowserPanel({
 
 // ── Ana Bileşen ──────────────────────────────────────────────────────────────
 
-export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs, pendingSearch, onSearchProcessed, onGoToSettings, isActive }: any) {
+export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs, pendingSearch, onSearchProcessed, onGoToSettings, isActive, onRemoveFromCart }: any) {
   const [depolar, setDepolar] = useState<Depo[]>(loadDepolar);
 
   useEffect(() => {
@@ -1304,6 +1525,105 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   // Bulk query states
   const [bulkQueryResult, setBulkQueryResult] = useState<Record<string, { ok: boolean; stok?: number; fiyat_depocu?: number; mf?: string; net?: number; error?: string }>>({});
   const [bulkQueryLoading, setBulkQueryLoading] = useState(false);
+
+  // Selçuk Ecza Kampanya İndirme ve Parse Etme Akışı
+  const [importingCampaigns, setImportingCampaigns] = useState(false);
+
+  const handleImportSelcukCampaigns = async () => {
+    const activeTabObj = tabs.find(t => t.id === activeTabId);
+    if (!activeTabObj) return;
+
+    const webview = webviewRefs.current[activeTabId] as any;
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
+      setToast({ id: Date.now(), message: '❌ Depo tarayıcı paneli hazır değil', type: 'error' });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    setImportingCampaigns(true);
+    setToast({
+      id: Date.now(),
+      message: '⏳ Selçuk Ecza kampanya excel dosyası indiriliyor...',
+      type: 'loading'
+    });
+
+    try {
+      const downloadScript = `
+        (async function() {
+          try {
+            const response = await fetch('https://webdepo.selcukecza.com.tr/DownloadAttachment.aspx?Tip=baslayan');
+            if (!response.ok) {
+              return { error: 'HTTP hatası: ' + response.status };
+            }
+            const blob = await response.blob();
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve({ data: reader.result });
+              reader.onerror = () => resolve({ error: 'Okuma hatası' });
+              reader.readAsDataURL(blob);
+            });
+          } catch (e) {
+            return { error: e.message || String(e) };
+          }
+        })()
+      `;
+
+      const res = await webview.executeJavaScript(downloadScript);
+      
+      if (!res || res.error) {
+        throw new Error(res?.error || 'Dosya indirilemedi');
+      }
+
+      const base64Data = res.data;
+      if (!base64Data || typeof base64Data !== 'string' || !base64Data.includes('UEsDB')) {
+        throw new Error('Geçersiz Excel dosyası. Oturumunuz kapanmış olabilir, lütfen giriş yapın.');
+      }
+
+      setToast({
+        id: Date.now(),
+        message: '⏳ Dosya kaydediliyor ve kampanyalar parse ediliyor...',
+        type: 'loading'
+      });
+
+      const tenantGln = gln || 'local';
+      
+      // Excel dosyasını kaydet
+      if ((window as any).go?.main?.App?.SaveLocalBase64File) {
+        await (window as any).go.main.App.SaveLocalBase64File(tenantGln, 'Kampanya Listesi.xlsx', base64Data);
+      } else {
+        throw new Error('Electron API SaveLocalBase64File bulunamadı.');
+      }
+
+      // Python script'ini çalıştırıp kampanyaları parse et ve önbelleği güncelle
+      if ((window as any).go?.main?.App?.ParseSelcukCampaigns) {
+        const parseRes = await (window as any).go.main.App.ParseSelcukCampaigns(tenantGln);
+        const parseObj = JSON.parse(parseRes);
+        if (parseObj.status === 'success') {
+          setToast({
+            id: Date.now(),
+            message: `✅ Kampanyalar başarıyla güncellendi! ${parseObj.count} ilaç önbelleğe kaydedildi.`,
+            type: 'success'
+          });
+          setTimeout(() => setToast(null), 6000);
+        } else {
+          throw new Error(parseObj.message || 'Kampanya listesi işlenirken hata oluştu.');
+        }
+      } else {
+        throw new Error('Electron API ParseSelcukCampaigns bulunamadı.');
+      }
+
+    } catch (err: any) {
+      console.error('[Import Campaigns] Hata:', err);
+      setToast({
+        id: Date.now(),
+        message: `❌ Hata: ${err.message || err}`,
+        type: 'error'
+      });
+      setTimeout(() => setToast(null), 6000);
+    } finally {
+      setImportingCampaigns(false);
+    }
+  };
 
   // Preload path yüKle (Electron webview için)
   useEffect(() => {
@@ -2095,12 +2415,10 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
 
     setBulkQueryLoading(true);
 
-    const cacheFilename = depoId === 'gek' ? 'gek_query_cache.json' : (depoId === 'alliance' ? 'alliance_query_cache.json' : (depoId === 'as_ecza' || depoId === 'as' ? 'as_ecza_query_cache.json' : `${depoId}_query_cache.json`));
     let cache: any = {};
     const todayStr = new Date().toLocaleDateString('en-CA');
     try {
-      const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln || 'local', cacheFilename);
-      if (cacheStr && cacheStr !== '{}') cache = JSON.parse(cacheStr);
+      cache = await loadAndMigrateCache(gln || 'local');
     } catch (e) {
       console.error('[Depolar] Önbellek yüklenemedi:', e);
     }
@@ -2110,12 +2428,14 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       let loginRequiredEncountered = false;
       let debugTokenToUseLength = 0;
 
+      const cacheKey = getCacheKey(depoId);
+
       for (let i = 0; i < barcodes.length; i++) {
         const barcode = barcodes[i];
 
         // Önbellek kontrolü
-        const cached = cache[barcode];
-        if (cached && cached.date === todayStr) {
+        const cached = cache[barcode]?.[cacheKey];
+        if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
           const stokVal = cached.stok || 0;
           const dsfVal = cached.fiyat_depocu || 0;
           const mfList = cached.mf_baremleri || [];
@@ -2566,7 +2886,10 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             }
 
             // Önbelleğe kaydet
-            cache[barcode] = {
+            if (!cache[barcode]) {
+              cache[barcode] = {};
+            }
+            cache[barcode][cacheKey] = {
               date: todayStr,
               stok: stokVal,
               fiyat_depocu: dsfVal,
@@ -2578,7 +2901,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             };
             try {
               if ((window as any).go?.main?.App?.SaveLocalJSON) {
-                await (window as any).go.main.App.SaveLocalJSON(gln || 'local', cacheFilename, JSON.stringify(cache, null, 2));
+                await (window as any).go.main.App.SaveLocalJSON(gln || 'local', 'query_cache.json', JSON.stringify(cache, null, 2));
               }
             } catch (e) {
               console.error('[Depolar] Önbellek kaydedilemedi:', e);
@@ -2868,62 +3191,18 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           ) : (
             depolar.filter(d => d.enabled !== false).map(depo => (
               <div key={depo.id} className="group relative flex items-center gap-2 px-3 py-1.5 bg-white border border-stone-200 rounded-xl hover:border-blue-400 hover:shadow-sm transition-all shrink-0">
-                <button
-                  onClick={() => handleOpenDepo(depo)}
-                  className="flex items-center gap-1.5 text-[11px] font-bold text-stone-700 hover:text-blue-600"
-                >
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: depo.renk }} />
-                  {depo.ad}
-                </button>
-
-                {/* Hover Credentials Tooltip */}
-                <div className="absolute top-full left-0 mt-1 hidden group-hover:flex flex-col bg-stone-900 text-white rounded-xl shadow-lg border border-stone-800 p-2.5 z-[999] min-w-[160px] text-[10px] space-y-1">
-                  <div className="flex items-center justify-between gap-2 border-b border-stone-800 pb-1 mb-1">
-                    <span className="text-stone-400 font-bold uppercase text-[9px]">{depo.ad}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-stone-500 font-medium shrink-0">Kullanıcı:</span>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigator.clipboard?.writeText(depo.kullanici || '');
-                        alert(`${depo.ad} Kullanıcı Adı kopyalandı!`);
-                      }}
-                      className="font-mono font-bold text-stone-300 hover:text-teal-400 truncate hover:underline text-right"
-                      title="Kopyalamak için tıklayın"
-                    >
-                      {depo.kullanici || '—'}
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-stone-500 font-medium shrink-0">Kod:</span>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigator.clipboard?.writeText(depo.kod || '');
-                        alert(`${depo.ad} Depo Kodu kopyalandı!`);
-                      }}
-                      className="font-mono font-bold text-stone-300 hover:text-teal-400 truncate hover:underline text-right"
-                      title="Kopyalamak için tıklayın"
-                    >
-                      {depo.kod || '—'}
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-stone-500 font-medium shrink-0">Şifre:</span>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigator.clipboard?.writeText(depo.sifre || '');
-                        alert(`${depo.ad} Şifre kopyalandı!`);
-                      }}
-                      className="font-mono font-bold text-stone-300 hover:text-teal-400 truncate hover:underline text-right"
-                      title="Kopyalamak için tıklayın"
-                    >
-                      {depo.sifre || '—'}
-                    </button>
-                  </div>
-                </div>
+              <CredentialTooltip
+                depo={depo}
+                trigger={
+                  <button
+                    onClick={() => handleOpenDepo(depo)}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-stone-700 hover:text-blue-600"
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: depo.renk }} />
+                    {depo.ad}
+                  </button>
+                }
+              />
               </div>
             ))
           )}
@@ -2971,6 +3250,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             bulkQueryLoading={bulkQueryLoading}
             onBulkQuery={triggerWarehouseBulkQuery}
             activeDepoAd={tabs.find(t => t.id === activeTabId)?.title || 'Aktif Depo'}
+            onRemoveFromCart={onRemoveFromCart}
           />
         </div>
 
@@ -2992,6 +3272,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             onOrderResult={handleOrderResult}
             webviewRefs={webviewRefs}
             depolar={depolar}
+            onImportSelcukCampaigns={handleImportSelcukCampaigns}
+            importingCampaigns={importingCampaigns}
           />
         </div>
 

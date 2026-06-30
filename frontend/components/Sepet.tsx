@@ -7,12 +7,69 @@ import { Trash2, Package, Upload, Download, Copy, Check, Cloud, CloudOff, Loader
 import * as XLSX from 'xlsx';
 import { loadDepolar } from '@/components/Depolar';
 
+
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 const isWails = typeof window !== 'undefined' && (window as any).go !== undefined;
+
+function getCacheKey(depoId: string): string {
+  if (!depoId) return 'UNKNOWN';
+  const id = depoId.toLowerCase();
+  if (id === 'as' || id === 'as_ecza') return 'AS_ECZA';
+  return id.toUpperCase();
+}
+
+async function loadAndMigrateCache(gln: string): Promise<any> {
+  const tenantGln = gln || 'local';
+  try {
+    const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
+    if (rawCombined && rawCombined !== '{}') {
+      const parsed = JSON.parse(rawCombined);
+      const firstKey = Object.keys(parsed)[0];
+      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
+        return parsed;
+      }
+    }
+  } catch (err) {}
+
+  const combined: any = {};
+  const oldFiles = [
+    { file: 'selcuk_query_cache.json', key: 'SELCUK' },
+    { file: 'as_ecza_query_cache.json', key: 'AS_ECZA' },
+    { file: 'gek_query_cache.json', key: 'GEK' },
+    { file: 'alliance_query_cache.json', key: 'ALLIANCE' },
+    { file: 'nevzat_query_cache.json', key: 'NEVZAT' },
+    { file: 'cam_query_cache.json', key: 'CAM' }
+  ];
+
+  for (const item of oldFiles) {
+    try {
+      const raw = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, item.file);
+      if (raw && raw !== '{}') {
+        const data = JSON.parse(raw);
+        for (const [barcode, entry] of Object.entries(data)) {
+          if (!combined[barcode]) combined[barcode] = {};
+          if (entry && typeof entry === 'object') {
+            combined[barcode][item.key] = {
+              ...(entry as any),
+              depo: (entry as any).depo || item.key
+            };
+          }
+        }
+      }
+    } catch (err) {}
+  }
+
+  if (Object.keys(combined).length > 0) {
+    try {
+      await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(combined, null, 2));
+    } catch (err) {}
+  }
+  return combined;
+}
 
 type CartItem = {
     barkod: string;
@@ -42,6 +99,7 @@ interface SepetPageProps {
     localOrders: any[];
     data?: any;
     webviewRefs?: React.MutableRefObject<Record<string, any>>;
+    onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void;
 }
 
 const getPurchaseHistory = (alimStr: string) => {
@@ -116,7 +174,7 @@ const getQueryHistory = (barcode: string, localOrders: any[]) => {
     .slice(0, 5);
 };
 
-export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders, data, webviewRefs }: SepetPageProps) {
+export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders, data, webviewRefs, onOpenProductAnalysis }: SepetPageProps) {
     const [expandedBarkod, setExpandedBarkod] = useState<string | null>(null);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
     const [editingCell, setEditingCell] = useState<{ barkod: string; field: string } | null>(null);
@@ -161,18 +219,16 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
             }
 
             let cache: any = {};
-            let cacheFilename = '';
             let todayStr = '';
 
             todayStr = new Date().toLocaleDateString('en-CA');
-            cacheFilename = currentDepo.id === 'gek' ? 'gek_query_cache.json' : (currentDepo.id === 'alliance' ? 'alliance_query_cache.json' : (currentDepo.id === 'as' || currentDepo.id === 'as_ecza' ? 'as_ecza_query_cache.json' : `${currentDepo.id}_query_cache.json`));
             try {
-                const rawCache = await (window as any).go.main.App.LoadLocalJSON(gln || 'local', cacheFilename);
-                if (rawCache && rawCache !== '{}') cache = JSON.parse(rawCache);
+                cache = await loadAndMigrateCache(gln || 'local');
             } catch {}
 
-            const cached = cache[barcode];
-            if (cached && cached.date === todayStr) {
+            const cacheKey = getCacheKey(currentDepo.id);
+            const cached = cache[barcode]?.[cacheKey];
+            if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
                 const mfList = cached.mf_baremleri || [];
                 const parsedBarems = mfList.map((raw: string) => {
                     const p = raw.split('+');
@@ -462,7 +518,11 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                     };
                 }
 
-                cache[barcode] = {
+                const cacheKey = getCacheKey(currentDepo.id);
+                if (!cache[barcode]) {
+                    cache[barcode] = {};
+                }
+                cache[barcode][cacheKey] = {
                     date: todayStr,
                     stok: 1,
                     fiyat_depocu: 0,
@@ -473,7 +533,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                     depo: currentDepo.ad || currentDepo.id
                 };
                 try {
-                    await (window as any).go.main.App.SaveLocalJSON(gln || 'local', cacheFilename, JSON.stringify(cache, null, 2));
+                    await (window as any).go.main.App.SaveLocalJSON(gln || 'local', 'query_cache.json', JSON.stringify(cache, null, 2));
                 } catch (e) {
                     console.error('Önbellek kaydetme hatası:', e);
                 }
@@ -900,15 +960,35 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                 className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-2 focus:ring-teal-100 cursor-pointer"
                                             />
                                         </th>
-                                        <th className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Ürün</th>
-                                        <th className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Barkod</th>
-                                        <th className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">Adet</th>
-                                        <th className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">MF</th>
+                                        <th
+                                            onClick={() => handleSort('ad')}
+                                            className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide cursor-pointer hover:text-teal-600 select-none"
+                                        >
+                                            Ürün{renderSortIcon('ad')}
+                                        </th>
+                                        <th
+                                            onClick={() => handleSort('barkod')}
+                                            className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide cursor-pointer hover:text-teal-600 select-none"
+                                        >
+                                            Barkod{renderSortIcon('barkod')}
+                                        </th>
+                                        <th
+                                            onClick={() => handleSort('qty')}
+                                            className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide cursor-pointer hover:text-teal-600 select-none"
+                                        >
+                                            Adet{renderSortIcon('qty')}
+                                        </th>
+                                        <th
+                                            onClick={() => handleSort('mf')}
+                                            className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide cursor-pointer hover:text-teal-600 select-none"
+                                        >
+                                            MF{renderSortIcon('mf')}
+                                        </th>
                                         <th className="px-2 md:px-4 py-2 md:py-3 text-right text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide">İşlem</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredItems.flatMap((item) => {
+                                    {sortedItems.flatMap((item) => {
                                         const isExpanded = expandedBarkod === item.barkod;
                                         const purchases = getPurchaseHistory(item.v95);
                                         const queries = getQueryHistory(item.barkod, localOrders);
@@ -957,17 +1037,20 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                         className="w-4 h-4 rounded border-stone-300 text-teal-600 focus:ring-2 focus:ring-teal-100 cursor-pointer"
                                                     />
                                                 </td>
-                                                <td 
-                                                    onClick={() => setExpandedBarkod(isExpanded ? null : item.barkod)}
-                                                    className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900 cursor-pointer hover:text-teal-600 select-none"
-                                                >
+                                                <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900 select-none">
                                                     <div className="flex items-center flex-wrap gap-2">
-                                                        <span>{item.ad}</span>
-                                                        <span className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0">
+                                                        <span
+                                                            onClick={() => onOpenProductAnalysis?.(item.barkod, item.ad)}
+                                                            className="cursor-pointer hover:text-teal-600 transition-colors"
+                                                        >{item.ad}</span>
+                                                        <span
+                                                            onClick={() => setExpandedBarkod(isExpanded ? null : item.barkod)}
+                                                            className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0 cursor-pointer hover:bg-teal-100 transition-colors"
+                                                        >
                                                             Geçmiş ({purchases.length} Alım · {queries.length} Sorgu)
                                                         </span>
                                                         {baremler.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
+                                                            <div className="flex flex-wrap gap-1 mt-0.5">
                                                                 {baremler.map((b: any, bi: number) => (
                                                                     <button
                                                                         key={bi}
@@ -1161,6 +1244,8 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                         </div>
                     </div>
                 )}
+
+
             </div>
         </div>
     );
