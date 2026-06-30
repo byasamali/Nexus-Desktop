@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@supabase/supabase-js';
 import { Trash2, Package, Upload, Download, Copy, Check, Cloud, CloudOff, Loader2, Search, X, FileUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { loadDepolar } from '@/components/Depolar';
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,6 +22,7 @@ type CartItem = {
     mf: number;
     v95?: string;
     mf_baremleri?: any[];
+    stock?: number;
 };
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -39,6 +41,7 @@ interface SepetPageProps {
     gln: string;
     localOrders: any[];
     data?: any;
+    webviewRefs?: React.MutableRefObject<Record<string, any>>;
 }
 
 const getPurchaseHistory = (alimStr: string) => {
@@ -113,7 +116,7 @@ const getQueryHistory = (barcode: string, localOrders: any[]) => {
     .slice(0, 5);
 };
 
-export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders, data }: SepetPageProps) {
+export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab, gln, localOrders, data, webviewRefs }: SepetPageProps) {
     const [expandedBarkod, setExpandedBarkod] = useState<string | null>(null);
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
     const [editingCell, setEditingCell] = useState<{ barkod: string; field: string } | null>(null);
@@ -122,7 +125,264 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [showImportModal, setShowImportModal] = useState(false);
     const [importText, setImportText] = useState('');
+    const [sortField, setSortField] = useState<string>('');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [queryProgress, setQueryProgress] = useState<{ current: number; total: number; msg: string } | null>(null);
+
+    const handleQueryMFForSelected = async () => {
+        const barcodesArray = Array.from(selectedItems);
+        if (barcodesArray.length === 0) {
+            alert('Lütfen sorgulanacak ürünleri seçin!');
+            return;
+        }
+        
+        let successCount = 0;
+        let failCount = 0;
+        
+        const activeDepots = loadDepolar().filter(d => d.enabled !== false);
+        const updatedItems = [...items];
+        
+        for (let idx = 0; idx < barcodesArray.length; idx++) {
+            const barcode = barcodesArray[idx];
+            const item = updatedItems.find(i => i.barkod === barcode);
+            if (!item) continue;
+            
+            const depoName = item.depo;
+            if (!depoName || depoName === 'Depo Belirsiz' || depoName === 'Seçiniz...') {
+                failCount++;
+                continue;
+            }
+            
+            const currentDepo = activeDepots.find(d => d.ad === depoName || d.id === depoName);
+            if (!currentDepo) {
+                failCount++;
+                continue;
+            }
+            
+            setQueryProgress({
+                current: idx + 1,
+                total: barcodesArray.length,
+                msg: `${item.ad} sorgulanıyor... (${currentDepo.ad})`
+            });
+            
+            try {
+                let targetDomain = 'asecza.com.tr';
+                if (currentDepo.id === 'gek') targetDomain = 'gek.org.tr';
+                else if (currentDepo.id === 'alliance') targetDomain = 'alliance';
+                else if (currentDepo.id === 'selcuk') targetDomain = 'selcukecza.com.tr';
+                else if (currentDepo.id === 'nevzat') targetDomain = 'nevzatecza.com.tr';
+                else if (currentDepo.id === 'cam') targetDomain = 'camecza.com';
+                else {
+                    try { targetDomain = new URL(currentDepo.url).hostname.replace('www.', ''); } catch {}
+                }
+                
+                let webview: any = null;
+                if (webviewRefs && webviewRefs.current) {
+                    for (const [id, el] of Object.entries(webviewRefs.current)) {
+                        if (el && typeof el.executeJavaScript === 'function') {
+                            try {
+                                const url: string = await el.executeJavaScript('location.href');
+                                if (url.includes(targetDomain) || 
+                                    ((currentDepo.id === 'as' || currentDepo.id === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                                    (currentDepo.id === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
+                                    webview = el;
+                                    break;
+                                }
+                            } catch {}
+                        }
+                    }
+                }
+                
+                if (!webview) {
+                    throw new Error('Oturum bulunamadı');
+                }
+                
+                let mfList: string[] = [];
+                let netList: string[] = [];
+                const barcodeJson = JSON.stringify(barcode);
+                
+                if (currentDepo.id === 'gek') {
+                    const localGekToken = localStorage.getItem('nexus_gek_token') || '';
+                    const queryResult: any = await webview.executeJavaScript(`
+                      (async function() {
+                        try {
+                          let token = window.__gekToken || ${JSON.stringify(localGekToken)} || "";
+                          const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunArama", {
+                            method: "POST",
+                            headers: { "content-type": "application/json", "Authorization": "Bearer " + token },
+                            body: JSON.stringify({ SearchText: ${barcodeJson}, Gln: ${JSON.stringify(gln)} })
+                          });
+                          if (!resp.ok) return { error: 'http_' + resp.status };
+                          const resData = await resp.json();
+                          if (resData.hataId !== 0) return { error: resData.hataStr || 'gek_err' };
+                          const urunler = resData.obj?.urunAramaList;
+                          if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+                          return urunler[0];
+                        } catch(e) { return { error: String(e) }; }
+                      })()
+                    `);
+                    
+                    if (queryResult && !queryResult.error) {
+                      const matnr = queryResult.matnr;
+                      const kampResult: any = await webview.executeJavaScript(`
+                        (async function() {
+                          try {
+                            const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunKampanyaBilgisiGetir", {
+                              method: "POST",
+                              headers: { "content-type": "application/json", "Authorization": "Bearer " + (window.__gekToken || "") },
+                              body: JSON.stringify({ Matnr: ${JSON.stringify(matnr)}, Gln: ${JSON.stringify(gln)} })
+                            });
+                            return resp.ok ? await resp.json() : null;
+                          } catch { return null; }
+                        })()
+                      `);
+                      
+                      const kampData = kampResult && kampResult.obj;
+                      const bArray: string[] = [];
+                      const nArray: string[] = [];
+                      if (Array.isArray(kampData?.kampanyaBaremleri)) {
+                        kampData.kampanyaBaremleri.forEach((b: any) => {
+                          if (b.anaMiktar > 0 && b.bedelsizMiktar > 0) {
+                            bArray.push(`${b.anaMiktar}+${b.bedelsizMiktar}`);
+                            nArray.push(String(b.netFiyat || 0));
+                          }
+                        });
+                      }
+                      mfList = bArray;
+                      netList = nArray;
+                    }
+                } else if (currentDepo.id === 'alliance') {
+                    const queryResult: any = await webview.executeJavaScript(`
+                      (async function() {
+                        try {
+                          const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+                          const sr = await fetch(sUrl, {
+                            method: "POST",
+                            headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                            credentials: "include",
+                            body: JSON.stringify({ RequestedPage: 1, SearchText: ${barcodeJson} })
+                          });
+                          if (!sr.ok) return { error: 'search_failed' };
+                          const sd = await sr.json();
+                          if (!Array.isArray(sd) || sd.length === 0) return { error: 'not_found' };
+                          const item = sd[0];
+                          
+                          const dUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/ItemDetailv2";
+                          const dr = await fetch(dUrl, {
+                            method: "POST",
+                            headers: { "content-type": "application/json; charset=UTF-8", accept: "text/html, */*; q=0.01", "x-requested-with": "XMLHttpRequest" },
+                            credentials: "include",
+                            body: JSON.stringify({ ItemID: String(item.ID), LoadSimple: true })
+                          });
+                          let detailHtml = "";
+                          if (dr.ok) {
+                            detailHtml = await dr.text();
+                          }
+                          return { item, detailHtml };
+                        } catch(e) { return { error: String(e) }; }
+                      })()
+                    `);
+                    
+                    if (queryResult && !queryResult.error) {
+                      const detailHtml = queryResult.detailHtml || "";
+                      const extractSpansLocal = (htmlStr: string): string[] => {
+                        if (!htmlStr) return [];
+                        const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
+                        if (!matches) return [];
+                        return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
+                      };
+                      mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
+                    }
+                } else {
+                    const searchResult: any = await webview.executeJavaScript(`
+                      (async function() {
+                        try {
+                          const params = new URLSearchParams({
+                            action: 'GetUrunler', searchText: ${barcodeJson},
+                            isInculude: 'false', isStoktakiler: 'false', siralama: 'ilacASC',
+                            marka: '', baslangicSayfasi: '0', topRowNum: '0', sayfaMaxRowAdet: '20', s: 's'
+                          });
+                          const resp = await fetch('/Siparis/hizlisiparis-ajax.aspx', {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                            credentials: 'include',
+                            body: params.toString()
+                          });
+                          if (!resp.ok) return { error: 'search_failed' };
+                          const data = await resp.json();
+                          if (data.hataId === 9 || String(data.hataId) === '9') return { error: 'login_required' };
+                          if (data.hataId !== 0) return { error: data.hataStr || 'search_error' };
+                          const urunler = data && data.obj && data.obj.urunler;
+                          if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+                          const u = urunler[0];
+                          return { kod: String(u.kodu || ''), ILACTIP: String(u.ILACTIP || ''), ad: String(u.ad || '') };
+                        } catch(e) { return { error: String(e) }; }
+                      })()
+                    `);
+                    
+                    if (searchResult && !searchResult.error) {
+                      const dParams = { kod: searchResult.kod, ILACTIP: searchResult.ILACTIP };
+                      const detailResult: any = await webview.executeJavaScript(`
+                        (async function() {
+                          try {
+                            const params = new URLSearchParams({
+                              action: 'GetIlacDetay', kod: ${JSON.stringify(dParams.kod)},
+                              isEsdeger: 'false', esdeger: '', isJenerik: 'false', jenerikId: '',
+                              tip: 'null', ILACTIP: ${JSON.stringify(dParams.ILACTIP)}, kampKodu: ''
+                            });
+                            const resp = await fetch('/Ilac/IlacGetir-ajax.aspx', {
+                              method: 'POST',
+                              headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                              credentials: 'include',
+                              body: params.toString()
+                            });
+                            return resp.ok ? await resp.json() : null;
+                          } catch { return null; }
+                        })()
+                      `);
+                      
+                      const detail = detailResult && detailResult.obj;
+                      const kampanyalar = Array.isArray(detail?.grdKampanyalar) ? detail.grdKampanyalar : [];
+                      const bArray: string[] = [];
+                      const nArray: string[] = [];
+                      kampanyalar.forEach((kamp: any) => {
+                        if (kamp?.mf && String(kamp.mf).trim().length > 0) {
+                          bArray.push(kamp.mf);
+                          nArray.push(kamp.netFiyat || '');
+                        }
+                      });
+                      mfList = bArray;
+                      netList = nArray;
+                    }
+                }
+                
+                const parsedBarems = mfList.map(raw => {
+                    const p = raw.split('+');
+                    return {
+                        ana: parseInt(p[0]) || 0,
+                        mf: parseInt(p[1]) || 0
+                    };
+                }).filter(b => b.ana > 0 && b.mf > 0);
+                
+                const index = updatedItems.findIndex(i => i.barkod === barcode);
+                if (index !== -1) {
+                    updatedItems[index] = {
+                        ...updatedItems[index],
+                        mf_baremleri: parsedBarems
+                    };
+                }
+                successCount++;
+            } catch (err) {
+                console.error(`Sorgulama hatası: ${item.ad}`, err);
+                failCount++;
+            }
+        }
+        
+        persistItems(updatedItems);
+        setQueryProgress(null);
+        alert(`Sorgulama tamamlandı.\nBaşarılı: ${successCount}\nBaşarısız: ${failCount}`);
+    };
 
     const productMap = useMemo(() => {
         const map: Record<string, any> = {};
@@ -153,7 +413,8 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                 qty: val.qty,
                 mf: val.mf || 0,
                 v95: val.v95 || extra.v95 || '',
-                mf_baremleri: val.mf_baremleri?.length ? val.mf_baremleri : (extra.mf_baremleri || [])
+                mf_baremleri: val.mf_baremleri?.length ? val.mf_baremleri : (extra.mf_baremleri || []),
+                stock: typeof extra.v4 === 'number' ? extra.v4 : parseInt(extra.v4 || 0)
             };
         });
 
@@ -186,6 +447,42 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
         item.barkod.includes(searchQuery) ||
         item.ad.toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    // --- SIRALAMA ---
+    const handleSort = (field: string) => {
+        if (sortField === field) {
+            setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortOrder('asc');
+        }
+    };
+
+    const sortedItems = useMemo(() => {
+        const sorted = [...filteredItems];
+        if (!sortField) return sorted;
+
+        sorted.sort((a, b) => {
+            let valA: any = a[sortField as keyof CartItem] ?? '';
+            let valB: any = b[sortField as keyof CartItem] ?? '';
+
+            if (typeof valA === 'string') {
+                return sortOrder === 'asc'
+                    ? valA.localeCompare(valB, 'tr')
+                    : valB.localeCompare(valA, 'tr');
+            } else {
+                const numA = Number(valA) || 0;
+                const numB = Number(valB) || 0;
+                return sortOrder === 'asc' ? numA - numB : numB - numA;
+            }
+        });
+        return sorted;
+    }, [filteredItems, sortField, sortOrder]);
+
+    const renderSortIcon = (field: string) => {
+        if (sortField !== field) return <span className="text-stone-300 ml-1 text-[9px]">↕</span>;
+        return sortOrder === 'asc' ? <span className="text-teal-600 ml-1 text-[9px]">▲</span> : <span className="text-teal-600 ml-1 text-[9px]">▼</span>;
+    };
 
     // --- SEÇIM ---
     const toggleSelectAll = () => {
@@ -434,12 +731,37 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                     </div>
 
                                     {selectedItems.size > 0 && (
-                                        <button
-                                            onClick={deleteSelected}
-                                            className="flex items-center justify-center gap-2 px-3 py-2 border border-red-200 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-semibold text-xs transition-all shrink-0"
-                                        >
-                                            <Trash2 size={14} /> <span>Sil ({selectedItems.size})</span>
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={deleteSelected}
+                                                className="flex items-center justify-center gap-2 px-3 py-2 border border-red-200 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-semibold text-xs transition-all shrink-0"
+                                            >
+                                                <Trash2 size={14} /> <span>Sil ({selectedItems.size})</span>
+                                            </button>
+                                            
+                                            <select
+                                                onChange={(e) => {
+                                                    const targetDepo = e.target.value;
+                                                    if (!targetDepo) return;
+                                                    const updated = items.map(item => selectedItems.has(item.barkod) ? { ...item, depo: targetDepo } : item);
+                                                    persistItems(updated);
+                                                    e.target.value = "";
+                                                }}
+                                                className="border border-stone-200 rounded-lg px-2.5 py-1.5 font-bold text-xs text-stone-700 bg-white focus:border-teal-500 cursor-pointer outline-none"
+                                            >
+                                                <option value="">Depo Değiştir...</option>
+                                                {loadDepolar().filter(d => d.enabled !== false).map(d => (
+                                                    <option key={d.id} value={d.ad}>{d.ad}</option>
+                                                ))}
+                                            </select>
+
+                                            <button
+                                                onClick={handleQueryMFForSelected}
+                                                className="flex items-center justify-center gap-2 px-3 py-2 border border-teal-200 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 font-bold text-xs transition-all shrink-0 cursor-pointer"
+                                            >
+                                                <Search size={14} /> <span>MF Sorgula</span>
+                                            </button>
+                                        </div>
                                     )}
 
                                     <button
@@ -593,7 +915,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                             </tr>,
                                             isExpanded && (
                                                 <tr key={`${item.barkod}-expanded`} className="bg-stone-50/50 animate-fadeIn">
-                                                    <td colSpan={6} className="px-4 py-4 border-b border-stone-100">
+                                                    <td colSpan={8} className="px-4 py-4 border-b border-stone-100">
                                                         <div className="pl-8 pr-4 py-1 w-full">
                                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                                                 {/* Sol Kolon: Fatura Alımları */}
@@ -713,6 +1035,23 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                     ✅ İçeri Aktar
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* PROGRESS OVERLAY */}
+                {queryProgress && (
+                    <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[130] flex items-center justify-center p-4">
+                        <div className="bg-white rounded-3xl p-6 shadow-2xl border border-stone-150 max-w-sm w-full flex flex-col items-center text-center gap-4">
+                            <span className="h-8 w-8 border-3 border-teal-500 border-t-transparent rounded-full animate-spin"></span>
+                            <div className="space-y-1">
+                                <h4 className="font-black text-stone-900 text-sm">Canlı MF Sorgulanıyor</h4>
+                                <p className="text-xs text-stone-500">{queryProgress.msg}</p>
+                            </div>
+                            <div className="w-full bg-stone-100 rounded-full h-1.5">
+                                <div className="bg-teal-650 h-1.5 rounded-full transition-all duration-300" style={{ width: `${(queryProgress.current / queryProgress.total) * 100}%` }}></div>
+                            </div>
+                            <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">{queryProgress.current} / {queryProgress.total}</span>
                         </div>
                     </div>
                 )}

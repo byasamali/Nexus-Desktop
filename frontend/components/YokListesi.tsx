@@ -23,6 +23,17 @@ interface OutOfStockItem {
 
 export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCartItem, setCart, onSearchInWarehouse, onOpenProductAnalysis }: { data: any; gln: string; cart?: any; updateCart?: any; toggleCartItem?: any; setCart?: any; onSearchInWarehouse?: (barcode: string) => void; onOpenProductAnalysis?: (barcode: string, fallbackName?: string) => void }) {
     const [items, setItems] = useState<OutOfStockItem[]>([]);
+    const productMap = React.useMemo(() => {
+        const map: Record<string, any> = {};
+        if (data?.gruplar) {
+            data.gruplar.forEach((g: any) => {
+                (g.detaylar || []).forEach((u: any) => {
+                    map[u.v1] = u;
+                });
+            });
+        }
+        return map;
+    }, [data]);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -47,11 +58,12 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
         const rows = items.map(item => ({
             'Ürün Adı': item.name,
             'Barkod': item.barcode,
+            'Stok': productMap[item.barcode]?.v4 ?? '—',
             'Depo': item.depo,
             'Ekleme Tarihi': new Date(item.addedAt).toLocaleDateString('tr-TR')
         }));
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 15 }, { wch: 15 }];
+        ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 10 }, { wch: 15 }, { wch: 15 }];
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Yok Listesi');
         XLSX.writeFile(wb, 'yok_listesi.xlsx');
@@ -59,10 +71,11 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
 
     const downloadPdf = () => {
         if (items.length === 0) return;
-        const headers = ['Ürün Adı', 'Barkod', 'Depo', 'Ekleme Zamanı'];
+        const headers = ['Ürün Adı', 'Barkod', 'Stok', 'Depo', 'Ekleme Zamanı'];
         const rows = items.map(item => [
             item.name,
             item.barcode,
+            String(productMap[item.barcode]?.v4 ?? '—'),
             item.depo,
             new Date(item.addedAt).toLocaleDateString('tr-TR') + ' ' + new Date(item.addedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
         ]);
@@ -379,6 +392,9 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
                                         <th onClick={() => handleSort('name')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-red-650 select-none">
                                             İlaç Adı {sortField === 'name' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
                                         </th>
+                                        <th className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-20">
+                                            Stok
+                                        </th>
                                         <th className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-36">
                                             Depoda Sorgula
                                         </th>
@@ -426,6 +442,9 @@ export default function YokListesi({ data, gln, cart = {}, updateCart, toggleCar
                                                         )}
                                                     </div>
                                                 </div>
+                                            </td>
+                                            <td className="px-3 py-0.5 text-center font-bold text-slate-600 font-mono">
+                                                {productMap[item.barcode]?.v4 ?? '—'}
                                             </td>
                                             <td className="px-3 py-0.5 text-center">
                                                 <button

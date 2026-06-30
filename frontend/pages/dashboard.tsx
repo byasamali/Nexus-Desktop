@@ -687,11 +687,22 @@ export default function OrderCockpit() {
   const [aiOnlyPharmaceuticalAndNoEquivalent, setAiOnlyPharmaceuticalAndNoEquivalent] = useState<boolean>(false);
   const [aiSkipMfQuery, setAiSkipMfQuery] = useState<boolean>(false);
   const [esdegerItem, setEsdegerItem] = useState<any>(null);
-  const [aiSimulationWarehouse, setAiSimulationWarehouse] = useState<'as' | 'gek'>('as');
+  const [aiSimulationWarehouse, setAiSimulationWarehouse] = useState<string>('as_ecza');
 
   // ⚡ Acil Sipariş Modu State'leri
   const [showUrgentModal, setShowUrgentModal] = useState(false);
-  const [urgentWarehouse, setUrgentWarehouse] = useState<'as' | 'gek'>('as');
+  const [urgentWarehouse, setUrgentWarehouse] = useState<string>('as_ecza');
+  const [mfQueryProduct, setMfQueryProduct] = useState<any>(null);
+  const [selectedMfWarehouse, setSelectedMfWarehouse] = useState<string>('as_ecza');
+  const [isSingleMfQuerying, setIsSingleMfQuerying] = useState<boolean>(false);
+
+  const handleToggleAISelect = (barcode: string) => {
+    setAiResults(prev => prev.map(r => r.barkod === barcode ? { ...r, selected: !r.selected } : r));
+  };
+
+  const handleToggleUrgentSelect = (barcode: string) => {
+    setUrgentResults(prev => prev.map(r => r.barkod === barcode ? { ...r, selected: !r.selected } : r));
+  };
   const [urgentSimulating, setUrgentSimulating] = useState(false);
   const [urgentProgress, setUrgentProgress] = useState('');
   const [urgentResults, setUrgentResults] = useState<any[]>([]);
@@ -734,6 +745,7 @@ export default function OrderCockpit() {
           baremler: [],
           netFiyatlar: [],
           esdegerGrubu,
+          selected: true,
           whyData: {
             need: defaultQty,
             targetDays: daysLimitCount,
@@ -814,7 +826,11 @@ export default function OrderCockpit() {
         const deltaDays = totalFreeQty / (groupDailySpeed || 0.001);
         const deltaMonths = deltaDays / 30;
         const carryingCostPct = deltaMonths * (5 / 100);
-        const gainPct = baselineNetPrice > 0 ? (baselineNetPrice - b.netPrice) / baselineNetPrice : 0;
+        const currentMfRatio = (b.ana + b.bedava) > 0 ? b.bedava / (b.ana + b.bedava) : 0;
+        const baselineMfRatio = baselineBaremObj && (baselineBaremObj.ana + baselineBaremObj.bedava) > 0 
+          ? baselineBaremObj.bedava / (baselineBaremObj.ana + baselineBaremObj.bedava) 
+          : 0;
+        const gainPct = Math.max(0, currentMfRatio - baselineMfRatio);
         const netReturn = gainPct - carryingCostPct;
         
         let status = 'pending';
@@ -1241,15 +1257,31 @@ export default function OrderCockpit() {
 
     // 3. Aktif depo webview referansını tarayıp bul
     let hiddenWebview: any = null;
-    const targetDomain = aiSimulationWarehouse === 'gek' ? 'gek.org.tr' : 'asecza.com.tr';
-    const warehouseName = aiSimulationWarehouse === 'gek' ? 'Güney Ecza (GEK)' : 'AS Ecza';
+    let targetDomain = 'asecza.com.tr';
+    if (aiSimulationWarehouse === 'gek') targetDomain = 'gek.org.tr';
+    else if (aiSimulationWarehouse === 'alliance') targetDomain = 'alliance';
+    else if (aiSimulationWarehouse === 'selcuk') targetDomain = 'selcukecza.com.tr';
+    else if (aiSimulationWarehouse === 'nevzat') targetDomain = 'nevzatecza.com.tr';
+    else if (aiSimulationWarehouse === 'cam') targetDomain = 'camecza.com';
+    else {
+      const foundDepo = loadDepolar().find(d => d.id === aiSimulationWarehouse);
+      if (foundDepo) {
+        try {
+          targetDomain = new URL(foundDepo.url).hostname.replace('www.', '');
+        } catch {}
+      }
+    }
+    
+    const warehouseName = loadDepolar().find(d => d.id === aiSimulationWarehouse)?.ad || 'AS Ecza';
 
     if (!aiSkipMfQuery) {
       for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
         if (el && typeof el.executeJavaScript === 'function') {
           try {
             const url: string = await el.executeJavaScript('location.href');
-            if (url.includes(targetDomain) || (aiSimulationWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis'))) {
+            if (url.includes(targetDomain) || 
+                ((aiSimulationWarehouse === 'as' || aiSimulationWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                (aiSimulationWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
               hiddenWebview = el;
               break;
             }
@@ -1417,16 +1449,15 @@ export default function OrderCockpit() {
           // Önbellekte yoksa, canlı sorgu atıyoruz
           const barcodeJson = JSON.stringify(barcode);
           if (!hiddenWebview) {
-            // Depo bağlantısı yok - önbellek verisi olmadığı için bu ürünü atlıyoruz (MF sorgulama atla modu)
             results.push({
               barkod: barcode,
               ad: name,
               stok: currentGroupStock,
-              hiz: groupDailySpeed * 30, // monthly speed
+              hiz: groupDailySpeed * 30,
               ihtiyac: need,
-              onerilen: 0,
+              onerilen: aiSkipMfQuery ? need : 0,
               secilenBarem: null,
-              yeniOmur: currentGroupStock > 0 && groupDailySpeed > 0 ? Math.round(currentGroupStock / groupDailySpeed) : null,
+              yeniOmur: currentGroupStock > 0 && groupDailySpeed > 0 ? Math.round((currentGroupStock + (aiSkipMfQuery ? need : 0)) / groupDailySpeed) : null,
               depocuFiyati: 0,
               netFiyat: null,
               toplamTutar: 0,
@@ -1435,7 +1466,8 @@ export default function OrderCockpit() {
               netFiyatlar: [],
               whyData: null,
               esdegerGrubu,
-              hata: 'Depo bağlantısı yok — önbellekte veri bulunamadı'
+              hata: aiSkipMfQuery ? null : 'Depo bağlantısı yok — önbellekte veri bulunamadı',
+              selected: true
             });
             setAiResults([...results]);
             await sleep(10);
@@ -1724,6 +1756,65 @@ export default function OrderCockpit() {
               kod: queryResult.matnr || ''
             };
 
+          } else if (aiSimulationWarehouse === 'alliance') {
+            const queryResult: any = await hiddenWebview.executeJavaScript(`
+              (async function() {
+                try {
+                  const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+                  const sr = await fetch(sUrl, {
+                    method: "POST",
+                    headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                    credentials: "include",
+                    body: JSON.stringify({ RequestedPage: 1, SearchText: ${barcodeJson} })
+                  });
+                  if (!sr.ok) return { error: 'search_failed' };
+                  const sd = await sr.json();
+                  if (!Array.isArray(sd) || sd.length === 0) return { error: 'not_found' };
+                  const item = sd[0];
+                  
+                  const dUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/ItemDetailv2";
+                  const dr = await fetch(dUrl, {
+                    method: "POST",
+                    headers: { "content-type": "application/json; charset=UTF-8", accept: "text/html, */*; q=0.01", "x-requested-with": "XMLHttpRequest" },
+                    credentials: "include",
+                    body: JSON.stringify({ ItemID: String(item.ID), LoadSimple: true })
+                  });
+                  let detailHtml = "";
+                  if (dr.ok) {
+                    detailHtml = await dr.text();
+                  }
+                  return { item, detailHtml };
+                } catch(e) { return { error: String(e) }; }
+              })()
+            `);
+            
+            let dsfVal = 0;
+            let psfVal = 0;
+            let stokVal = 0;
+            if (queryResult && !queryResult.error) {
+              const item = queryResult.item;
+              dsfVal = parseFloat(item.DepotPrice) || 0;
+              psfVal = parseFloat(item.LabelPrice) || 0;
+              stokVal = parseFloat(item.StockQty) || 0;
+              
+              const detailHtml = queryResult.detailHtml || "";
+              const extractSpansLocal = (htmlStr: string): string[] => {
+                if (!htmlStr) return [];
+                const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
+                if (!matches) return [];
+                return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
+              };
+              mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
+            }
+            
+            detail = {
+              stokDurumu: stokVal,
+              depocuFiyati: dsfVal,
+              SonFiyat: psfVal,
+              ad: name,
+              kod: queryResult?.item?.Code || ''
+            };
+
           } else {
             // A. Ürün Arama (AS Ecza)
             const searchResult: any = await hiddenWebview.executeJavaScript(`
@@ -1943,7 +2034,11 @@ export default function OrderCockpit() {
               const carryingCostPct = deltaMonths * (aiMonthlyCarryingCost / 100);
               
               // Getiri oranı (baseline net fiyata göre)
-              const gainPct = baselineNetPrice > 0 ? (baselineNetPrice - b.netPrice) / baselineNetPrice : 0;
+              const currentMfRatio = (b.ana + b.bedava) > 0 ? b.bedava / (b.ana + b.bedava) : 0;
+              const baselineMfRatio = baselineBaremObj && (baselineBaremObj.ana + baselineBaremObj.bedava) > 0 
+                ? baselineBaremObj.bedava / (baselineBaremObj.ana + baselineBaremObj.bedava) 
+                : 0;
+              const gainPct = Math.max(0, currentMfRatio - baselineMfRatio);
               const netReturn = gainPct - carryingCostPct;
 
               let status = 'pending';
@@ -2020,6 +2115,7 @@ export default function OrderCockpit() {
           netFiyatlar: netList,
           whyData,
           esdegerGrubu,
+          selected: true,
         });
 
       } catch (err) {
@@ -2038,7 +2134,8 @@ export default function OrderCockpit() {
           toplamTutar: 0,
           hata: String(err?.message || err || 'Sorgu Hatası'),
           baremler: [],
-          netFiyatlar: []
+          netFiyatlar: [],
+          selected: true
         });
       }
 
@@ -2115,7 +2212,7 @@ export default function OrderCockpit() {
   const handleApplyAISuggestions = () => {
     const newCart = { ...cart };
     aiResults.forEach(r => {
-      if (r.onerilen > 0 && !r.hata) {
+      if (r.onerilen > 0 && !r.hata && r.selected) {
         const urun = data?.gruplar?.flatMap((g: any) => g.detaylar).find((u: any) => u.v1 === r.barkod) as any;
         if (urun) {
           // Seçilen baremin bedava miktarı
@@ -2136,7 +2233,7 @@ export default function OrderCockpit() {
             mf: bedava,
             inCart: true,
             ad: urun.v2,
-            depo: urun.v91 || 'AS ECZA',
+            depo: urun.v91 || loadDepolar().find(d => d.id === aiSimulationWarehouse)?.ad || 'AS ECZA',
             v95: urun.v95 || null,
             // Güncel MF baremleri: simülasyondan gelen canlı veri öncelikli
             mf_baremleri: liveMfBaremleri.length > 0 ? liveMfBaremleri : (urun.mf_baremleri || [])
@@ -2227,7 +2324,7 @@ export default function OrderCockpit() {
   const handleApplyUrgentSuggestions = () => {
     const newCart = { ...cart };
     urgentResults.forEach(r => {
-      if (r.onerilen > 0 && !r.hata) {
+      if (r.onerilen > 0 && !r.hata && r.selected) {
         const urun = data?.gruplar?.flatMap((g: any) => g.detaylar).find((u: any) => u.v1 === r.barkod) as any;
         if (urun) {
           const parts = r.secilenBarem ? r.secilenBarem.split('+') : null;
@@ -2246,7 +2343,7 @@ export default function OrderCockpit() {
             mf: bedava,
             inCart: true,
             ad: urun.v2,
-            depo: urun.v91 || (urgentWarehouse === 'gek' ? 'GEK' : 'AS ECZA'),
+            depo: urun.v91 || loadDepolar().find(d => d.id === urgentWarehouse)?.ad || 'AS ECZA',
             v95: urun.v95 || null,
             mf_baremleri: liveMfBaremleri.length > 0 ? liveMfBaremleri : (urun.mf_baremleri || [])
           };
@@ -2614,7 +2711,7 @@ export default function OrderCockpit() {
       let cache: Record<string, any> = {};
       try {
         if ((window as any).go?.main?.App?.LoadLocalJSON) {
-          const orderFile = urgentWarehouse === 'gek' ? 'gek_siparisler.json' : 'as_siparisler.json';
+          const orderFile = urgentWarehouse === 'gek' ? 'gek_siparisler.json' : (urgentWarehouse === 'alliance' ? 'alliance_siparisler.json' : (urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza' ? 'as_siparisler.json' : `${urgentWarehouse}_siparisler.json`));
           const rawSiparisler = await (window as any).go.main.App.LoadLocalJSON(gln, orderFile);
           if (rawSiparisler && rawSiparisler !== '{}') {
             const parsed = JSON.parse(rawSiparisler);
@@ -2635,14 +2732,14 @@ export default function OrderCockpit() {
                     mf_baremleri: mf_baremleri,
                     net_fiyatlar: net_fiyatlar,
                     kod: entry.urun_kodu || '',
-                    depo: entry.depo || (urgentWarehouse === 'gek' ? 'GEK' : 'AS ECZA')
+                    depo: entry.depo || loadDepolar().find(d => d.id === urgentWarehouse)?.ad || 'AS ECZA'
                   };
                 }
               });
             }
           }
           
-          const cacheFile = urgentWarehouse === 'gek' ? 'gek_query_cache.json' : 'as_ecza_query_cache.json';
+          const cacheFile = urgentWarehouse === 'gek' ? 'gek_query_cache.json' : (urgentWarehouse === 'alliance' ? 'alliance_query_cache.json' : (urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza' ? 'as_ecza_query_cache.json' : `${urgentWarehouse}_query_cache.json`));
           const cacheStr = await (window as any).go.main.App.LoadLocalJSON(gln, cacheFile);
           if (cacheStr && cacheStr !== '{}') {
             const legacyCache = JSON.parse(cacheStr);
@@ -2663,14 +2760,30 @@ export default function OrderCockpit() {
       }
 
       let hiddenWebview: any = null;
-      const targetDomain = urgentWarehouse === 'gek' ? 'gek.org.tr' : 'asecza.com.tr';
-      const warehouseName = urgentWarehouse === 'gek' ? 'Güney Ecza (GEK)' : 'AS Ecza';
+      let targetDomain = 'asecza.com.tr';
+      if (urgentWarehouse === 'gek') targetDomain = 'gek.org.tr';
+      else if (urgentWarehouse === 'alliance') targetDomain = 'alliance';
+      else if (urgentWarehouse === 'selcuk') targetDomain = 'selcukecza.com.tr';
+      else if (urgentWarehouse === 'nevzat') targetDomain = 'nevzatecza.com.tr';
+      else if (urgentWarehouse === 'cam') targetDomain = 'camecza.com';
+      else {
+        const foundDepo = loadDepolar().find(d => d.id === urgentWarehouse);
+        if (foundDepo) {
+          try {
+            targetDomain = new URL(foundDepo.url).hostname.replace('www.', '');
+          } catch {}
+        }
+      }
+      
+      const warehouseName = loadDepolar().find(d => d.id === urgentWarehouse)?.ad || 'AS Ecza';
 
       for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
         if (el && typeof el.executeJavaScript === 'function') {
           try {
             const url: string = await el.executeJavaScript('location.href');
-            if (url.includes(targetDomain) || (urgentWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis'))) {
+            if (url.includes(targetDomain) || 
+                ((urgentWarehouse === 'as' || urgentWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                (urgentWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
               hiddenWebview = el;
               break;
             }
@@ -2784,7 +2897,8 @@ export default function OrderCockpit() {
                 toplamTutar: 0,
                 depo: '',
                 isCached: false,
-                hata: 'Depo bağlantısı yok — önbellekte veri bulunamadı'
+                hata: 'Depo bağlantısı yok — önbellekte veri bulunamadı',
+                selected: true
               });
               setUrgentResults([...results]);
               await sleep(10);
@@ -3027,6 +3141,65 @@ export default function OrderCockpit() {
                 kod: queryResult.matnr || ''
               };
 
+            } else if (urgentWarehouse === 'alliance') {
+              const queryResult: any = await hiddenWebview.executeJavaScript(`
+                (async function() {
+                  try {
+                    const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+                    const sr = await fetch(sUrl, {
+                      method: "POST",
+                      headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                      credentials: "include",
+                      body: JSON.stringify({ RequestedPage: 1, SearchText: ${barcodeJson} })
+                    });
+                    if (!sr.ok) return { error: 'search_failed' };
+                    const sd = await sr.json();
+                    if (!Array.isArray(sd) || sd.length === 0) return { error: 'not_found' };
+                    const item = sd[0];
+                    
+                    const dUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/ItemDetailv2";
+                    const dr = await fetch(dUrl, {
+                      method: "POST",
+                      headers: { "content-type": "application/json; charset=UTF-8", accept: "text/html, */*; q=0.01", "x-requested-with": "XMLHttpRequest" },
+                      credentials: "include",
+                      body: JSON.stringify({ ItemID: String(item.ID), LoadSimple: true })
+                    });
+                    let detailHtml = "";
+                    if (dr.ok) {
+                      detailHtml = await dr.text();
+                    }
+                    return { item, detailHtml };
+                  } catch(e) { return { error: String(e) }; }
+                })()
+              `);
+              
+              let dsfVal = 0;
+              let psfVal = 0;
+              let stokVal = 0;
+              if (queryResult && !queryResult.error) {
+                const item = queryResult.item;
+                dsfVal = parseFloat(item.DepotPrice) || 0;
+                psfVal = parseFloat(item.LabelPrice) || 0;
+                stokVal = parseFloat(item.StockQty) || 0;
+                
+                const detailHtml = queryResult.detailHtml || "";
+                const extractSpansLocal = (htmlStr: string): string[] => {
+                  if (!htmlStr) return [];
+                  const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
+                  if (!matches) return [];
+                  return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
+                };
+                mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
+              }
+              
+              detail = {
+                stokDurumu: stokVal,
+                depocuFiyati: dsfVal,
+                SonFiyat: psfVal,
+                ad: name,
+                kod: queryResult?.item?.Code || ''
+              };
+
             } else {
               const searchResult: any = await hiddenWebview.executeJavaScript(`
                 (async function() {
@@ -3228,7 +3401,11 @@ export default function OrderCockpit() {
                 const deltaDays = totalFreeQty / groupDailySpeed;
                 const deltaMonths = deltaDays / 30;
                 const carryingCostPct = deltaMonths * (5 / 100);
-                const gainPct = baselineNetPrice > 0 ? (baselineNetPrice - b.netPrice) / baselineNetPrice : 0;
+                const currentMfRatio = (b.ana + b.bedava) > 0 ? b.bedava / (b.ana + b.bedava) : 0;
+                const baselineMfRatio = baselineBaremObj && (baselineBaremObj.ana + baselineBaremObj.bedava) > 0 
+                  ? baselineBaremObj.bedava / (baselineBaremObj.ana + baselineBaremObj.bedava) 
+                  : 0;
+                const gainPct = Math.max(0, currentMfRatio - baselineMfRatio);
                 const netReturn = gainPct - carryingCostPct;
 
                 let status = 'pending';
@@ -3302,6 +3479,7 @@ export default function OrderCockpit() {
             netFiyatlar: netList,
             whyData,
             esdegerGrubu,
+            selected: true,
           });
 
         } catch (err) {
@@ -3325,6 +3503,7 @@ export default function OrderCockpit() {
             netFiyatlar: [],
             whyData: null,
             esdegerGrubu: null,
+            selected: true,
           });
         }
 
@@ -4065,6 +4244,271 @@ export default function OrderCockpit() {
   // Depolar sekmesi sidebar'ı gizler ve tam ekran açılır
   const isDepolarTab = activeTab === 'depolar';
 
+  const handleExecuteSingleProductMFQuery = async (urun: any, warehouseId: string) => {
+    if (!urun) return;
+    
+    const activeDepolar = loadDepolar();
+    const currentDepo = activeDepolar.find(d => d.id === warehouseId);
+    if (!currentDepo) {
+      alert('Depo bulunamadı.');
+      return;
+    }
+    
+    const warehouseName = currentDepo.ad;
+    let targetDomain = 'asecza.com.tr';
+    if (warehouseId === 'gek') targetDomain = 'gek.org.tr';
+    else if (warehouseId === 'alliance') targetDomain = 'alliance';
+    else if (warehouseId === 'selcuk') targetDomain = 'selcukecza.com.tr';
+    else if (warehouseId === 'nevzat') targetDomain = 'nevzatecza.com.tr';
+    else if (warehouseId === 'cam') targetDomain = 'camecza.com';
+    else {
+      try { targetDomain = new URL(currentDepo.url).hostname.replace('www.', ''); } catch {}
+    }
+
+    let hiddenWebview: any = null;
+    if (sharedWebviewRefs && sharedWebviewRefs.current) {
+      for (const [id, el] of Object.entries(sharedWebviewRefs.current)) {
+        if (el && typeof el.executeJavaScript === 'function') {
+          try {
+            const url: string = await el.executeJavaScript('location.href');
+            if (url.includes(targetDomain) || 
+                ((warehouseId === 'as' || warehouseId === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                (warehouseId === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
+              hiddenWebview = el;
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    if (!hiddenWebview) {
+      alert(`${warehouseName} oturumu bulunamadı. Lütfen önce 'Depolar' sekmesinden ${warehouseName}'ya giriş yapın.`);
+      return;
+    }
+
+    setIsSingleMfQuerying(true);
+    try {
+      const barcode = urun.v1;
+      const barcodeJson = JSON.stringify(barcode);
+      let mfList: string[] = [];
+      let netList: string[] = [];
+      let dsfVal = 0;
+      let psfVal = 0;
+
+      if (warehouseId === 'gek') {
+        const localGekToken = (typeof window !== 'undefined' ? localStorage.getItem('nexus_gek_token') : '') || '';
+        const queryResult: any = await hiddenWebview.executeJavaScript(`
+          (async function() {
+            try {
+              let token = window.__gekToken || ${JSON.stringify(localGekToken)} || "";
+              const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunArama", {
+                method: "POST",
+                headers: { "content-type": "application/json", "Authorization": "Bearer " + token },
+                body: JSON.stringify({ SearchText: ${barcodeJson}, Gln: ${JSON.stringify(data?.gln || 'local')} })
+              });
+              if (!resp.ok) return { error: 'http_' + resp.status };
+              const resData = await resp.json();
+              if (resData.hataId !== 0) return { error: resData.hataStr || 'gek_err' };
+              const urunler = resData.obj?.urunAramaList;
+              if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+              return urunler[0];
+            } catch(e) { return { error: String(e) }; }
+          })()
+        `);
+        
+        if (queryResult && !queryResult.error) {
+          const matnr = queryResult.matnr;
+          dsfVal = parseFloat(queryResult.aktifFiyat) || 0;
+          psfVal = parseFloat(queryResult.kamuFiyati) || 0;
+          
+          const kampResult: any = await hiddenWebview.executeJavaScript(`
+            (async function() {
+              try {
+                const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunKampanyaBilgisiGetir", {
+                  method: "POST",
+                  headers: { "content-type": "application/json", "Authorization": "Bearer " + (window.__gekToken || "") },
+                  body: JSON.stringify({ Matnr: ${JSON.stringify(matnr)}, Gln: ${JSON.stringify(data?.gln || 'local')} })
+                });
+                return resp.ok ? await resp.json() : null;
+              } catch { return null; }
+            })()
+          `);
+          
+          const kampData = kampResult && kampResult.obj;
+          const bArray: string[] = [];
+          const nArray: string[] = [];
+          if (Array.isArray(kampData?.kampanyaBaremleri)) {
+            kampData.kampanyaBaremleri.forEach((b: any) => {
+              if (b.anaMiktar > 0 && b.bedelsizMiktar > 0) {
+                bArray.push(`${b.anaMiktar}+${b.bedelsizMiktar}`);
+                nArray.push(String(b.netFiyat || 0));
+              }
+            });
+          }
+          mfList = bArray;
+          netList = nArray;
+        }
+      } else if (warehouseId === 'alliance') {
+        const queryResult: any = await hiddenWebview.executeJavaScript(`
+          (async function() {
+            try {
+              const sUrl = "https://esiparisv2.alliance-healthcare.com.tr/Item/ElasticSearchItems";
+              const sr = await fetch(sUrl, {
+                method: "POST",
+                headers: { "content-type": "application/json; charset=UTF-8", accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" },
+                credentials: "include",
+                body: JSON.stringify({ RequestedPage: 1, SearchText: ${barcodeJson} })
+              });
+              if (!sr.ok) return { error: 'search_failed' };
+              const sd = await sr.json();
+              if (!Array.isArray(sd) || sd.length === 0) return { error: 'not_found' };
+              const item = sd[0];
+              
+              const dUrl = "https://esiparisv2.alliance-healthcare.com.tr/Sales/ItemDetailv2";
+              const dr = await fetch(dUrl, {
+                method: "POST",
+                headers: { "content-type": "application/json; charset=UTF-8", accept: "text/html, */*; q=0.01", "x-requested-with": "XMLHttpRequest" },
+                credentials: "include",
+                body: JSON.stringify({ ItemID: String(item.ID), LoadSimple: true })
+              });
+              let detailHtml = "";
+              if (dr.ok) {
+                detailHtml = await dr.text();
+              }
+              return { item, detailHtml };
+            } catch(e) { return { error: String(e) }; }
+          })()
+        `);
+        
+        if (queryResult && !queryResult.error) {
+          const item = queryResult.item;
+          dsfVal = parseFloat(item.DepotPrice) || 0;
+          psfVal = parseFloat(item.LabelPrice) || 0;
+          
+          const detailHtml = queryResult.detailHtml || "";
+          const extractSpansLocal = (htmlStr: string): string[] => {
+            if (!htmlStr) return [];
+            const matches = htmlStr.match(/<span>(.*?)<\/span>/g);
+            if (!matches) return [];
+            return matches.map((m: string) => m.replace(/<\/?span>/g, '').trim());
+          };
+          mfList = extractSpansLocal(detailHtml).filter(b => b.includes('+'));
+        }
+      } else {
+        const searchResult: any = await hiddenWebview.executeJavaScript(`
+          (async function() {
+            try {
+              const params = new URLSearchParams({
+                action: 'GetUrunler', searchText: ${barcodeJson},
+                isInculude: 'false', isStoktakiler: 'false', siralama: 'ilacASC',
+                marka: '', baslangicSayfasi: '0', topRowNum: '0', sayfaMaxRowAdet: '20', s: 's'
+              });
+              const resp = await fetch('/Siparis/hizlisiparis-ajax.aspx', {
+                method: 'POST',
+                headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                credentials: 'include',
+                body: params.toString()
+              });
+              if (!resp.ok) return { error: 'search_failed' };
+              const data = await resp.json();
+              if (data.hataId === 9 || String(data.hataId) === '9') return { error: 'login_required' };
+              if (data.hataId !== 0) return { error: data.hataStr || 'search_error' };
+              const urunler = data && data.obj && data.obj.urunler;
+              if (!Array.isArray(urunler) || urunler.length === 0) return { error: 'not_found' };
+              const u = urunler[0];
+              return { kod: String(u.kodu || ''), ILACTIP: String(u.ILACTIP || ''), ad: String(u.ad || ''), dsf: parseFloat(u.fiyat_depocu) || 0, psf: parseFloat(u.fiyat_etiket) || 0 };
+            } catch(e) { return { error: String(e) }; }
+          })()
+        `);
+        
+        if (searchResult && !searchResult.error) {
+          dsfVal = searchResult.dsf;
+          psfVal = searchResult.psf;
+          
+          const dParams = { kod: searchResult.kod, ILACTIP: searchResult.ILACTIP };
+          const detailResult: any = await hiddenWebview.executeJavaScript(`
+            (async function() {
+              try {
+                const params = new URLSearchParams({
+                  action: 'GetIlacDetay', kod: ${JSON.stringify(dParams.kod)},
+                  isEsdeger: 'false', esdeger: '', isJenerik: 'false', jenerikId: '',
+                  tip: 'null', ILACTIP: ${JSON.stringify(dParams.ILACTIP)}, kampKodu: ''
+                });
+                const resp = await fetch('/Ilac/IlacGetir-ajax.aspx', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+                  credentials: 'include',
+                  body: params.toString()
+                });
+                return resp.ok ? await resp.json() : null;
+              } catch { return null; }
+            })()
+          `);
+          
+          const detail = detailResult && detailResult.obj;
+          const kampanyalar = Array.isArray(detail?.grdKampanyalar) ? detail.grdKampanyalar : [];
+          const bArray: string[] = [];
+          const nArray: string[] = [];
+          kampanyalar.forEach((kamp: any) => {
+            if (kamp?.mf && String(kamp.mf).trim().length > 0) {
+              bArray.push(kamp.mf);
+              nArray.push(kamp.netFiyat || '');
+            }
+          });
+          mfList = bArray;
+          netList = nArray;
+        }
+      }
+
+      const parsedBarems = mfList.map(raw => {
+        const p = raw.split('+');
+        return {
+          ana: parseInt(p[0]) || 0,
+          mf: parseInt(p[1]) || 0
+        };
+      }).filter(b => b.ana > 0 && b.mf > 0);
+
+      const todayStr = new Date().toLocaleDateString('en-CA');
+      const cacheFilename = warehouseId === 'gek' ? 'gek_query_cache.json' : (warehouseId === 'alliance' ? 'alliance_query_cache.json' : 'as_ecza_query_cache.json');
+      let cache: any = {};
+      try {
+        const rawCache = await (window as any).go.main.App.LoadLocalJSON(data?.gln || 'local', cacheFilename);
+        if (rawCache && rawCache !== '{}') cache = JSON.parse(rawCache);
+      } catch {}
+      cache[barcode] = {
+        date: todayStr,
+        stok: 1,
+        fiyat_depocu: dsfVal,
+        fiyat_etiket: psfVal,
+        mf_baremleri: mfList,
+        net_fiyatlar: netList,
+        kod: ''
+      };
+      await (window as any).go.main.App.SaveLocalJSON(data?.gln || 'local', cacheFilename, JSON.stringify(cache, null, 2));
+
+      if (data && Array.isArray(data.gruplar)) {
+        const updatedGruplar = data.gruplar.map((g: any) => {
+          const updatedDetaylar = (g.detaylar || []).map((u: any) => {
+            if (u.v1 === barcode) {
+              return { ...u, mf_baremleri: parsedBarems };
+            }
+            return u;
+          });
+          return { ...g, detaylar: updatedDetaylar };
+        });
+        setData({ ...data, gruplar: updatedGruplar });
+      }
+
+      alert(`Sorgulama tamamlandı! Baremler: ${mfList.join(', ') || 'Barem bulunamadı'}`);
+    } catch (err: any) {
+      alert('Sorgulama hatası: ' + (err.message || err));
+    } finally {
+      setIsSingleMfQuerying(false);
+      setMfQueryProduct(null);
+    }
+  };
+
   return (
     <div className={cn("flex min-h-screen bg-stone-50 text-stone-900 font-sans relative", isWails && "wails-compact")}>
       
@@ -4505,6 +4949,7 @@ export default function OrderCockpit() {
                                   onEditProductDetails={setEditingDbProduct}
                                   selectedDaysLimit={selectedDaysLimit}
                                   hideGroupHeaders={hideGroupHeaders}
+                                  onSorgulaMf={(urun: any) => setMfQueryProduct(urun)}
                                 />
                               ))}
                             </tbody>
@@ -4555,7 +5000,7 @@ export default function OrderCockpit() {
                     onOpenProductAnalysis={handleOpenProductAnalysis}
                   />
                 )}
-                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} data={data} />}
+                {activeTab === 'sepet' && <SepetPage cart={cart} syncStatus={cartSyncStatus} persistItems={updateCartFromSepet} setActiveTab={setActiveTab} gln={data?.gln || 'local'} localOrders={localOrders} data={data} webviewRefs={sharedWebviewRefs} />}
                 {/* {activeTab === 'depolar' && <Depolar cart={cart} gln={data?.gln || 'local'} />} */}
                 {activeTab === 'gorev' && <TaskBoard gln={data?.gln || 'local'} />}
                 {activeTab === 'sayim' && <InventoryBoard data={data?.sayim_plani || []} gln={data?.gln || 'local'} />}
@@ -4809,7 +5254,8 @@ export default function OrderCockpit() {
                             toggleCartItem={toggleCartItem} copyFn={copyToClipboard} copiedId={copiedBarkod}
                             openAnalysis={setSelectedAnalysis} activeMenu={activeMenu} setActiveMenu={setActiveMenu}
                             onIgnore={handleIgnore} selectedBarkods={selectedBarkods} setSelectedBarkods={setSelectedBarkods}
-                            onGrupDetail={setSelectedGrup} selectedDaysLimit={selectedDaysLimit} />
+                            onGrupDetail={setSelectedGrup} selectedDaysLimit={selectedDaysLimit}
+                            onSorgulaMf={(urun: any) => setMfQueryProduct(urun)} />
                         ))}
                       </tbody>
                     </table>
@@ -5210,14 +5656,15 @@ export default function OrderCockpit() {
                 <div className="bg-gradient-to-r from-red-50 to-stone-50 border border-red-100 rounded-2xl px-4 py-3 flex items-center justify-between flex-wrap gap-4">
                   <div className="flex items-center gap-4 flex-wrap">
                     <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest shrink-0">Depo:</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-red-650 transition-colors">
-                      <input type="radio" name="urgentWarehouse" value="as" checked={urgentWarehouse === 'as'} onChange={() => setUrgentWarehouse('as')} className="w-3.5 h-3.5 accent-red-500" />
-                      AS Ecza
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-red-650 transition-colors">
-                      <input type="radio" name="urgentWarehouse" value="gek" checked={urgentWarehouse === 'gek'} onChange={() => setUrgentWarehouse('gek')} className="w-3.5 h-3.5 accent-red-500" />
-                      GEK
-                    </label>
+                    <select
+                      value={urgentWarehouse}
+                      onChange={(e) => setUrgentWarehouse(e.target.value)}
+                      className="bg-transparent text-[11px] font-black text-slate-700 outline-none border-none cursor-pointer"
+                    >
+                      {loadDepolar().filter(d => d.enabled !== false).map(d => (
+                        <option key={d.id} value={d.id}>{d.ad}</option>
+                      ))}
+                    </select>
 
                     <div className="w-[1px] h-4 bg-stone-200 mx-2 hidden sm:block"></div>
 
@@ -5326,7 +5773,20 @@ export default function OrderCockpit() {
                       <table className="w-full text-left text-[11px] border-collapse">
                         <thead className="bg-stone-50 text-stone-600 border-b border-stone-200 sticky top-0 z-10">
                           <tr>
-                            <th className="px-3 py-1.5 font-bold uppercase tracking-wider">İlaç Adı</th>
+                            <th className="px-3 py-1.5 font-bold uppercase tracking-wider">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={urgentResults.length > 0 && urgentResults.every(r => r.selected)}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setUrgentResults(prev => prev.map(r => ({ ...r, selected: checked })));
+                                  }}
+                                  className="w-3.5 h-3.5 rounded accent-red-650 cursor-pointer"
+                                />
+                                İlaç Adı
+                              </div>
+                            </th>
                             <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-center w-14">Stok</th>
                             <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-center w-14">Aylık Hız</th>
                             <th className="px-3 py-1.5 font-bold uppercase tracking-wider text-center w-14">Ömür</th>
@@ -5341,6 +5801,12 @@ export default function OrderCockpit() {
                                 <td className="px-3 py-1 font-bold text-stone-900">
                                   <div className="flex flex-col">
                                     <div className="flex items-center gap-1.5 flex-wrap">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!r.selected}
+                                        onChange={() => handleToggleUrgentSelect(r.barkod)}
+                                        className="w-3.5 h-3.5 rounded accent-red-650 cursor-pointer shrink-0"
+                                      />
                                       <span 
                                         onClick={() => handleOpenProductAnalysis(r.barkod, r.ad)}
                                         className="font-bold text-teal-650 hover:underline hover:text-teal-850 cursor-pointer"
@@ -5577,14 +6043,15 @@ export default function OrderCockpit() {
                   {/* Alt satır: Depo + Filtreler tek satırda */}
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-2.5 border-t border-violet-100/70">
                     <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest shrink-0">Depo:</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-violet-700 transition-colors">
-                      <input type="radio" name="aiSimulationWarehouse" value="as" checked={aiSimulationWarehouse === 'as'} onChange={() => setAiSimulationWarehouse('as')} className="w-3.5 h-3.5 accent-violet-600" />
-                      AS Ecza
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-stone-600 hover:text-violet-700 transition-colors">
-                      <input type="radio" name="aiSimulationWarehouse" value="gek" checked={aiSimulationWarehouse === 'gek'} onChange={() => setAiSimulationWarehouse('gek')} className="w-3.5 h-3.5 accent-violet-600" />
-                      GEK
-                    </label>
+                    <select
+                      value={aiSimulationWarehouse}
+                      onChange={(e) => setAiSimulationWarehouse(e.target.value)}
+                      className="bg-transparent text-[11px] font-black text-slate-700 outline-none border-none cursor-pointer"
+                    >
+                      {loadDepolar().filter(d => d.enabled !== false).map(d => (
+                        <option key={d.id} value={d.id}>{d.ad}</option>
+                      ))}
+                    </select>
 
                     <div className="w-px h-4 bg-stone-200 mx-1 shrink-0"></div>
 
@@ -5658,7 +6125,20 @@ export default function OrderCockpit() {
                       <table className="w-full text-left text-xs border-collapse">
                         <thead className="bg-stone-50 border-b border-stone-200 sticky top-0 z-10 text-stone-500">
                           <tr>
-                            <th className="px-3 py-2 font-bold uppercase text-[9px] w-[35%]">Ürün Adı</th>
+                            <th className="px-3 py-2 font-bold uppercase text-[9px] w-[35%]">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={aiResults.length > 0 && aiResults.every(r => r.selected)}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setAiResults(prev => prev.map(r => ({ ...r, selected: checked })));
+                                  }}
+                                  className="w-3.5 h-3.5 rounded accent-violet-650 cursor-pointer"
+                                />
+                                Ürün Adı
+                              </div>
+                            </th>
                             <th className="px-2 py-2 font-bold uppercase text-[9px] text-center w-[8%]">Stok</th>
                             <th className="px-2 py-2 font-bold uppercase text-[9px] text-center w-[9%]">Hız/ay</th>
                             <th className="px-2 py-2 font-bold uppercase text-[9px] text-center w-[8%]">İhtiyaç</th>
@@ -5674,6 +6154,12 @@ export default function OrderCockpit() {
                                 <tr key={idx} className="hover:bg-stone-50/50 group/row bg-red-50/10">
                                   <td className="px-2 py-2 text-left">
                                     <div className="flex items-center gap-1.5 min-w-0">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!r.selected}
+                                        onChange={() => handleToggleAISelect(r.barkod)}
+                                        className="w-3.5 h-3.5 rounded accent-violet-650 cursor-pointer shrink-0"
+                                      />
                                       <p 
                                         onClick={() => handleOpenProductAnalysis(r.barkod, r.ad)}
                                         className="font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer truncate text-[11px] min-w-0 shrink" 
@@ -5738,6 +6224,12 @@ export default function OrderCockpit() {
                               <tr key={idx} className="hover:bg-stone-50/50 group/row">
                                 <td className="px-2 py-2 text-left">
                                   <div className="flex items-center gap-1.5 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!r.selected}
+                                      onChange={() => handleToggleAISelect(r.barkod)}
+                                      className="w-3.5 h-3.5 rounded accent-violet-650 cursor-pointer shrink-0"
+                                    />
                                     <p 
                                       onClick={() => handleOpenProductAnalysis(r.barkod, r.ad)}
                                       className="font-bold text-teal-650 hover:underline hover:text-teal-800 cursor-pointer truncate text-[11px] min-w-0 shrink" 
@@ -6062,7 +6554,7 @@ export default function OrderCockpit() {
                                 <p className="text-[11px] text-stone-500 font-medium">
                                   Net Birim Fiyat: <strong className="text-stone-700">{b.netPrice.toFixed(2)} TL</strong> 
                                   {whyItem.whyData.baselineBarem !== b.raw && (
-                                    <> (Referans fiyata göre Getiri: <strong className="text-emerald-600 font-extrabold">%{(b.gainPct * 100).toFixed(1)}</strong>)</>
+                                    <> (Getiri: <strong className="text-emerald-600 font-extrabold">%{(b.gainPct * 100).toFixed(1)}</strong>)</>
                                   )}
                                 </p>
                               </div>
@@ -6114,6 +6606,69 @@ export default function OrderCockpit() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* SINGLE MF QUERY MODAL */}
+      <AnimatePresence>
+        {mfQueryProduct && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center bg-stone-900/40 backdrop-blur-sm p-4"
+            onClick={() => { if (!isSingleMfQuerying) setMfQueryProduct(null); }}>
+            <motion.div initial={{ scale: 0.95, y: 15 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 15 }}
+              onClick={(e: any) => e.stopPropagation()}
+              className="bg-white rounded-3xl border border-stone-200 shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
+              <div className="px-6 py-5 border-b border-stone-100 flex justify-between items-start">
+                <div>
+                  <h3 className="font-black text-stone-900 text-base leading-tight flex items-center gap-2">
+                    <Search size={18} className="text-teal-600" />
+                    MF Sorgula
+                  </h3>
+                  <p className="text-xs text-stone-400 mt-1">{mfQueryProduct.v2}</p>
+                </div>
+                <button onClick={() => { if (!isSingleMfQuerying) setMfQueryProduct(null); }} className="h-8 w-8 flex items-center justify-center rounded-xl bg-stone-100 hover:bg-red-50 hover:text-red-600 transition-colors text-stone-500">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs text-stone-500 font-bold">Sorgulanacak Depo:</span>
+                  <select
+                    value={selectedMfWarehouse}
+                    onChange={(e) => setSelectedMfWarehouse(e.target.value)}
+                    className="border border-stone-200 rounded-xl px-3 py-2 text-xs font-black text-slate-700 outline-none cursor-pointer bg-stone-50"
+                  >
+                    {loadDepolar().filter(d => d.enabled !== false).map(d => (
+                      <option key={d.id} value={d.id}>{d.ad}</option>
+                    ))}
+                  </select>
+                </div>
+                {isSingleMfQuerying && (
+                  <div className="flex items-center gap-2 text-xs font-bold text-teal-650">
+                    <span className="h-4 w-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin"></span>
+                    Canlı depo sorgulaması yapılıyor, lütfen bekleyin...
+                  </div>
+                )}
+              </div>
+              <div className="px-6 py-4 bg-stone-50 border-t border-stone-100 flex justify-end gap-2">
+                <button
+                  disabled={isSingleMfQuerying}
+                  onClick={() => setMfQueryProduct(null)}
+                  className="h-9 px-4 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 text-stone-600 font-bold text-xs disabled:opacity-50"
+                >
+                  İptal
+                </button>
+                <button
+                  disabled={isSingleMfQuerying}
+                  onClick={() => handleExecuteSingleProductMFQuery(mfQueryProduct, selectedMfWarehouse)}
+                  className="h-9 px-5 rounded-xl bg-teal-650 hover:bg-teal-700 text-white font-extrabold text-xs shadow-md disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  Sorgula
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
       {/* WhatsApp İletişim İkonu */}
       <a
         href="whatsapp://send?phone=905523624027&text=Merhaba,%20Nexus%20masaüstü%20programı%20hakkında%20geliştirme%20önerim/sorum%20var:"
@@ -6471,7 +7026,7 @@ function MobileProductCard({ urun, itemCart, updateCart, toggleCartItem, copyFn,
   );
 }
 
-function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit, hideGroupHeaders }: any) {
+function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, onGrupDetail, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit, hideGroupHeaders, onSorgulaMf }: any) {
   const [isOpen, setIsOpen] = useState(true);
   const originalCount = grup.original_count ?? grup.detaylar.length;
   const isSingle = originalCount === 1;
@@ -6485,7 +7040,7 @@ function TableGroupRow({ grup, cart, updateCart, toggleCartItem, copyFn, copiedI
   const omurGun = totalDailySpeed > 0 ? Math.round(totalStock / totalDailySpeed) : null;
   const grupBaslik = (grup.lider_adi || '').split(' ')[0] + ' GRUBU';
 
-  const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit };
+  const sharedProps = { cart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis, activeMenu, setActiveMenu, onIgnore, selectedBarkods, setSelectedBarkods, showTree, onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit, onSorgulaMf };
 
   return (
     <>
@@ -6576,7 +7131,8 @@ const PERIODS = [
 const TableProductRow = React.memo(function TableProductRow({
   urun, itemCart, updateCart, toggleCartItem, copyFn, copiedId, openAnalysis,
   selectedBarkods, setSelectedBarkods, isGrouped, isLastChild, showTree,
-  onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit
+  onEditCategory, onAddToYokListesi, onEditProductDetails, selectedDaysLimit,
+  onSorgulaMf
 }: any) {
   const [period, setPeriod] = useState<number | string>(30);
   const [opt, setOpt] = useState<string | null>(null);
@@ -6711,8 +7267,8 @@ const TableProductRow = React.memo(function TableProductRow({
               <Settings size={11} />
             </button>
 
-            <button onClick={() => {}}
-              className="px-2 py-0.5 text-[10px] font-bold text-teal-600 bg-teal-50 border border-teal-200 hover:bg-teal-100 hover:border-teal-300 rounded transition-colors flex items-center gap-1"
+            <button onClick={() => onSorgulaMf && onSorgulaMf(urun)}
+              className="px-2 py-0.5 text-[10px] font-bold text-teal-650 bg-teal-50 border border-teal-250 hover:bg-teal-100 hover:border-teal-350 rounded transition-colors flex items-center gap-1 cursor-pointer"
               title="Depolarda MF Sorgula">
               <Search size={10} />
               <span>MF Sorgula</span>
@@ -6787,7 +7343,6 @@ function GrupDetailContent({ grup, rawGrup, getBreadcrumb, cart, updateCart, tog
     { l: 'Hız', v: `${(totalD * 30).toFixed(1)}/ay`, c: 'text-blue-600' },
     { l: 'Stok', v: totalS, c: totalS <= 0 ? 'text-red-500' : 'text-stone-800' },
     { l: 'Ömür', v: omur ? `~${omur}g` : '—', c: !omur ? 'text-red-500' : omur < 30 ? 'text-amber-500' : 'text-emerald-600' },
-    { l: 'Değer', v: totalV > 0 ? `₺${(totalV / 1000).toFixed(1)}K` : '—', c: 'text-stone-700' },
     { l: 'Öneri', v: grup.toplam_oneri || 0, c: 'text-emerald-600' },
     { l: 'Grup 1 Ay', v: `${total30} Adet`, c: 'text-stone-600' },
     { l: 'Grup 2 Ay', v: `${total60} Adet`, c: 'text-stone-600' },
@@ -6797,7 +7352,7 @@ function GrupDetailContent({ grup, rawGrup, getBreadcrumb, cart, updateCart, tog
   return (
     <div>
       {/* KPI satırı */}
-      <div className="grid grid-cols-4 md:grid-cols-8 divide-x divide-stone-100 border-b border-stone-100 bg-stone-50/50">
+      <div className="grid grid-cols-4 md:grid-cols-7 divide-x divide-stone-100 border-b border-stone-100 bg-stone-50/50">
         {kpis.map(k => (
           <div key={k.l} className="px-1 py-2.5 text-center">
             <div className="text-[9px] text-stone-400 font-black uppercase tracking-widest">{k.l}</div>

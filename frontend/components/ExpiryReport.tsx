@@ -43,11 +43,10 @@ export default function ExpiryReport({ data, addToReturns, onOpenProductAnalysis
             'Ürün Adı': item.ad,
             'Barkod': item.barkod,
             'Stok': item.stok,
-            'Son Kullanma Tarihi': parseMiadStr(item.miad),
-            'Mali Değer': item.tutar
+            'Son Kullanma Tarihi': parseMiadStr(item.miad)
         }));
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 10 }, { wch: 25 }, { wch: 15 }];
+        ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 10 }, { wch: 25 }];
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Miad Risk Raporu');
         XLSX.writeFile(wb, 'miad_risk_analizi.xlsx');
@@ -55,13 +54,12 @@ export default function ExpiryReport({ data, addToReturns, onOpenProductAnalysis
 
     const downloadPdf = () => {
         if (activeData.length === 0) return;
-        const headers = ['Ürün Adı', 'Barkod', 'Stok', 'Son Kullanma', 'Mali Değer'];
+        const headers = ['Ürün Adı', 'Barkod', 'Stok', 'Son Kullanma'];
         const rows = activeData.map(item => [
             item.ad,
             item.barkod,
             String(item.stok),
-            parseMiadStr(item.miad),
-            String(item.tutar)
+            parseMiadStr(item.miad)
         ]);
 
         const printWindow = window.open('', '_blank');
@@ -231,9 +229,6 @@ export default function ExpiryReport({ data, addToReturns, onOpenProductAnalysis
                                 <th onClick={() => handleSort('miad')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] cursor-pointer hover:text-orange-650 select-none">
                                     Son Kullanma {sortField === 'miad' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
                                 </th>
-                                <th onClick={() => handleSort('tutar')} className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-right cursor-pointer hover:text-orange-650 select-none">
-                                    Mali Değer {sortField === 'tutar' ? (sortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
-                                </th>
                                 <th className="px-3 py-1.5 font-black text-slate-400 uppercase tracking-widest text-[10px] text-center w-[160px] select-none">İşlem</th>
                             </tr>
                         </thead>
@@ -254,7 +249,6 @@ export default function ExpiryReport({ data, addToReturns, onOpenProductAnalysis
                                     </td>
                                     <td className="px-3 py-1"><span className="font-bold text-slate-600">{item.stok}</span></td>
                                     <td className="px-3 py-1"><span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg font-black text-xs">{parseMiadStr(item.miad)}</span></td>
-                                    <td className="px-3 py-1 text-right font-black text-slate-800">{item.tutar}</td>
                                     <td className="px-3 py-1 text-center">
                                         <div className="flex justify-center">
                                             <button

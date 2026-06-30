@@ -76,24 +76,7 @@ export default function PredictionsReport({ data }: { data: any }) {
             </div>
 
             {/* OVERVIEW CARDS */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* FORECAST */}
-                <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
-                    <div className="flex justify-between items-start">
-                        <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
-                            <TrendingUp size={24} />
-                        </div>
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${forecast.growth >= 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
-                            {forecast.growth >= 0 ? '+' : ''}{forecast.growth.toFixed(1)}%
-                        </span>
-                    </div>
-                    <div className="mt-4">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Önümüzdeki Ay Ciro Tahmini</span>
-                        <span className="text-3xl font-black text-slate-800 block mt-1">₺{forecast.ciro.toLocaleString('tr-TR')}</span>
-                        <span className="text-xs text-slate-500 font-medium mt-1 block">Tahmini Kutu Satışı: <span className="font-bold text-slate-700">{forecast.quantity.toLocaleString('tr-TR')}</span></span>
-                    </div>
-                </div>
-
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* STAFFING */}
                 <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
                     <div className="flex justify-between items-start">

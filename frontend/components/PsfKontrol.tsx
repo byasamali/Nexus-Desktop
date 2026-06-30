@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Tag, Search, TrendingUp, AlertCircle, Check, Play, RefreshCw, X } from 'lucide-react';
 import { isPharmaceuticalCategory, categoryMap } from '@/lib/categoryMap';
 import { cn } from '@/lib/utils';
+import { loadDepolar } from '@/components/Depolar';
 
 interface PsfKontrolProps {
     data: any;
@@ -48,7 +49,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
     const [onlyShowDiff, setOnlyShowDiff] = useState(false);
 
     // Canlı sorgu state'leri
-    const [queryWarehouse, setQueryWarehouse] = useState<'as' | 'gek' | 'alliance'>('as');
+    const [queryWarehouse, setQueryWarehouse] = useState<string>('as');
     const [selectedBarcodes, setSelectedBarcodes] = useState<Set<string>>(new Set());
     const [queryProgress, setQueryProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
     const [isQuerying, setIsQuerying] = useState(false);
@@ -287,9 +288,22 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
             return;
         }
         
-        let hiddenWebview: any = null;
-        const targetDomain = queryWarehouse === 'gek' ? 'gek.org.tr' : queryWarehouse === 'alliance' ? 'alliance' : 'asecza.com.tr';
-        const warehouseName = queryWarehouse === 'gek' ? 'Güney Ecza (GEK)' : queryWarehouse === 'alliance' ? 'Alliance Healthcare' : 'AS Ecza';
+        let targetDomain = 'asecza.com.tr';
+        if (queryWarehouse === 'gek') targetDomain = 'gek.org.tr';
+        else if (queryWarehouse === 'alliance') targetDomain = 'alliance';
+        else if (queryWarehouse === 'selcuk') targetDomain = 'selcukecza.com.tr';
+        else if (queryWarehouse === 'nevzat') targetDomain = 'nevzatecza.com.tr';
+        else if (queryWarehouse === 'cam') targetDomain = 'camecza.com';
+        else {
+            const foundDepo = loadDepolar().find(d => d.id === queryWarehouse);
+            if (foundDepo) {
+                try {
+                    targetDomain = new URL(foundDepo.url).hostname.replace('www.', '');
+                } catch {}
+            }
+        }
+        
+        const warehouseName = loadDepolar().find(d => d.id === queryWarehouse)?.ad || 'AS Ecza';
         
         if (webviewRefs && webviewRefs.current) {
             for (const [id, el] of Object.entries(webviewRefs.current)) {
@@ -297,7 +311,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     try {
                         const url: string = await el.executeJavaScript('location.href');
                         if (url.includes(targetDomain) || 
-                            (queryWarehouse === 'as' && url.includes('127.0.0.1') && url.includes('Siparis')) ||
+                            ((queryWarehouse === 'as' || queryWarehouse === 'as_ecza') && url.includes('127.0.0.1') && url.includes('Siparis')) ||
                             (queryWarehouse === 'alliance' && (url.includes('alliance-healthcare.com') || url.includes('alliance')))) {
                             hiddenWebview = el;
                             break;
@@ -342,7 +356,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
         const total = barcodesArray.length;
 
         // Önbelleği yükle
-        const cacheFilename = queryWarehouse === 'gek' ? "gek_query_cache.json" : queryWarehouse === 'alliance' ? "alliance_query_cache.json" : "as_ecza_query_cache.json";
+        const cacheFilename = queryWarehouse === 'gek' ? "gek_query_cache.json" : queryWarehouse === 'alliance' ? "alliance_query_cache.json" : (queryWarehouse === 'as' || queryWarehouse === 'as_ecza' ? "as_ecza_query_cache.json" : `${queryWarehouse}_query_cache.json`);
         let cache: Record<string, any> = {};
         try {
             if ((window as any).go?.main?.App?.LoadLocalJSON) {
@@ -1226,12 +1240,12 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                         <select
                             disabled={isQuerying}
                             value={queryWarehouse}
-                            onChange={(e) => setQueryWarehouse(e.target.value as 'as' | 'gek' | 'alliance')}
+                            onChange={(e) => setQueryWarehouse(e.target.value)}
                             className="text-xs font-black text-slate-700 outline-none cursor-pointer bg-transparent"
                         >
-                            <option value="as">AS Ecza</option>
-                            <option value="gek">Güney Ecza (GEK)</option>
-                            <option value="alliance">Alliance Healthcare</option>
+                            {loadDepolar().filter(d => d.enabled !== false).map(d => (
+                                <option key={d.id} value={d.id}>{d.ad}</option>
+                            ))}
                         </select>
                     </div>
                 </div>
@@ -1243,7 +1257,7 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                         isQuerying ? "opacity-55 cursor-not-allowed" : ""
                     )}
                 >
-                    <Play size={15} /> {selectedBarcodes.size > 0 ? "Seçilenleri" : "Tüm Listeyi"} {queryWarehouse === 'as' ? "AS Ecza'dan" : queryWarehouse === 'alliance' ? "Alliance Healthcare'den" : "GEK'ten"} Sorgula
+                    <Play size={15} /> {selectedBarcodes.size > 0 ? "Seçilenleri" : "Tüm Listeyi"} {loadDepolar().find(d => d.id === queryWarehouse)?.ad || 'Depodan'} Sorgula
                 </button>
             </div>
 

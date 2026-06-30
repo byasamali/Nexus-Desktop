@@ -34,6 +34,7 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                     list.push({
                         barcode: u.v1,
                         name: u.v2,
+                        stock,
                         daysInactive,
                         monthlySpeed,
                         rawUrun: u
@@ -76,11 +77,12 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
         const rows = gozdenKacabilenler.map(item => ({
             'Ürün Adı': item.name,
             'Barkod': item.barcode,
+            'Stok': item.stock,
             'Hareketsizlik (Gün)': item.daysInactive,
             'Aylık Satış Hızı': item.monthlySpeed.toFixed(2)
         }));
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{ wch: 45 }, { wch: 18 }, { wch: 20 }, { wch: 18 }];
+        ws['!cols'] = [{ wch: 45 }, { wch: 18 }, { wch: 10 }, { wch: 20 }, { wch: 18 }];
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Gözden Kaçanlar');
         XLSX.writeFile(wb, 'gozden_kacanlar.xlsx');
@@ -131,6 +133,7 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                 <tr className="border-b border-slate-100 bg-slate-50/50">
                                     <th onClick={() => handleSort('name')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">İlaç Adı{renderSortIcon('name')}</th>
                                     <th onClick={() => handleSort('barcode')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider select-none cursor-pointer hover:text-slate-600">Barkod{renderSortIcon('barcode')}</th>
+                                    <th onClick={() => handleSort('stock')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Stok{renderSortIcon('stock')}</th>
                                     <th onClick={() => handleSort('daysInactive')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Hareketsizlik{renderSortIcon('daysInactive')}</th>
                                     <th onClick={() => handleSort('monthlySpeed')} className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none cursor-pointer hover:text-slate-600">Aylık Hız{renderSortIcon('monthlySpeed')}</th>
                                     <th className="px-3 py-1.5 text-xs font-black text-slate-400 uppercase tracking-wider text-center select-none w-[200px]">Sipariş</th>
@@ -179,6 +182,9 @@ export default function GozdenKacanlar({ data, gln, cart = {}, updateCart, toggl
                                                         item.barcode
                                                     )}
                                                 </button>
+                                            </td>
+                                            <td className="px-3 py-1 text-xs text-center font-bold text-slate-500 font-mono">
+                                                {item.stock}
                                             </td>
                                             <td className="px-3 py-1 text-xs text-center font-bold text-slate-600">
                                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 text-red-600 rounded-full border border-red-100">
