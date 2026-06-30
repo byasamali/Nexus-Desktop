@@ -2363,10 +2363,34 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                   const stokVal = detail?.ET_MARC?.[0]?.LABST ?? detail?.LABST ?? 0;
                   const rawFyt = detail?.ET_A004?.[0]?.KBETR ?? detail?.PSF ?? 0;
                   
+                  const mfSet = new Set();
+                  const netSet = new Set();
+                  const baremler = detail?.EP_T_BAREM || dd?.EP_T_BAREM || [];
+                  const klasmlar = detail?.EP_T_KLASM || dd?.EP_T_KLASM || [];
+                  
+                  for (const b of baremler) {
+                    const ana = Number(b.MFTBN) || 0;
+                    const mf = Number(b.MFADT) || 0;
+                    if (ana > 0 && mf > 0) {
+                      mfSet.add(ana + '+' + mf);
+                      netSet.add(String(b.NETFIYAT || b.BIRIMFIYAT || 0));
+                    }
+                  }
+                  for (const k of klasmlar) {
+                    const ana = Number(k.MFTBN) || 0;
+                    const mf = Number(k.MFADT) || 0;
+                    if (ana > 0 && mf > 0) {
+                      mfSet.add(ana + '+' + mf);
+                      netSet.add(String(k.NETFIYAT || k.BIRIMFIYAT || 0));
+                    }
+                  }
+                  
                   return {
                     ok: true,
                     stok: Number(stokVal) || 0,
-                    fiyat_depocu: Number(rawFyt) || 0
+                    fiyat_depocu: Number(rawFyt) || 0,
+                    mf_baremleri: Array.from(mfSet),
+                    net_fiyatlar: Array.from(netSet)
                   };
                 } catch(e) { return { error: String(e && e.message ? e.message : e) }; }
               })()
@@ -2521,6 +2545,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
               stokVal = queryResult.stok || 0;
               dsfVal = queryResult.fiyat_depocu || 0;
               psfVal = queryResult.ok ? dsfVal * 1.25 : 0; // fallback psf
+              mfList = queryResult.mf_baremleri || [];
+              netList = queryResult.net_fiyatlar || [];
             }
 
             setBulkQueryResult(prev => ({
