@@ -5047,7 +5047,7 @@ export default function OrderCockpit() {
       >
         <Depolar 
           cart={cart} 
-          gln={data?.gln || 'local'} 
+          gln={appSettings?.gln || 'local'} 
           data={data}
           onBack={() => setActiveTab('oneri')} 
           webviewRefs={sharedWebviewRefs}
