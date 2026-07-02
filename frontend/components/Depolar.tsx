@@ -1648,6 +1648,8 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   const localWebviewRefs = useRef<Record<string, any>>({});
   const webviewRefs = extWebviewRefs || localWebviewRefs;
 
+  const [showMiniCart, setShowMiniCart] = useState(true);
+
   // Hareket Raporu Eklentisi State'leri
   const [showMovementPanel, setShowMovementPanel] = useState(false);
   const [movementDays, setMovementDays] = useState(7);
@@ -3400,6 +3402,21 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
           Ana Menü
         </button>
 
+        {/* Sepet Toggle Butonu */}
+        <button
+          onClick={() => setShowMiniCart(v => !v)}
+          className={cn(
+            "flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-xl transition-all shrink-0 border shadow-sm cursor-pointer",
+            showMiniCart
+              ? "bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300"
+              : "bg-blue-600 hover:bg-blue-700 text-white border-blue-500 shadow-md"
+          )}
+          title={showMiniCart ? "Sepeti Gizle" : "Sepeti Göster"}
+        >
+          <ShoppingCart size={13} />
+          {showMiniCart ? "Sepeti Gizle" : "Sepeti Göster"}
+        </button>
+
         <div className="w-px h-5 bg-stone-200 shrink-0" />
 
         {/* Yatay Depolar Listesi */}
@@ -3485,20 +3502,25 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       {/* ALT BÖLÜM */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sol Panel — Mini Sepet */}
-        <div className="w-[28%] min-w-[280px] max-w-[380px] flex flex-col h-full border-r border-stone-200 bg-white">
-          <MiniSepet
-            cart={cart}
-            onBarcodeDoubleClick={handleBarcodeDoubleClick}
-            bulkQueryResult={bulkQueryResult}
-            bulkQueryLoading={bulkQueryLoading}
-            onBulkQuery={triggerWarehouseBulkQuery}
-            activeDepoAd={tabs.find(t => t.id === activeTabId)?.title || 'Aktif Depo'}
-            onRemoveFromCart={onRemoveFromCart}
-            productMap={productMap}
-            onOpenProductAnalysis={onOpenProductAnalysis}
-            onAddToCart={onAddToCart}
-            gln={gln}
-          />
+        <div className={cn(
+          "flex flex-col h-full border-r border-stone-200 bg-white transition-all duration-300 ease-in-out shrink-0",
+          showMiniCart ? "w-[28%] min-w-[280px] max-w-[380px]" : "w-0 border-r-0 overflow-hidden"
+        )}>
+          {showMiniCart && (
+            <MiniSepet
+              cart={cart}
+              onBarcodeDoubleClick={handleBarcodeDoubleClick}
+              bulkQueryResult={bulkQueryResult}
+              bulkQueryLoading={bulkQueryLoading}
+              onBulkQuery={triggerWarehouseBulkQuery}
+              activeDepoAd={tabs.find(t => t.id === activeTabId)?.title || 'Aktif Depo'}
+              onRemoveFromCart={onRemoveFromCart}
+              productMap={productMap}
+              onOpenProductAnalysis={onOpenProductAnalysis}
+              onAddToCart={onAddToCart}
+              gln={gln}
+            />
+          )}
         </div>
 
         {/* Sağ Panel — Tarayıcı Paneli */}
@@ -3696,50 +3718,52 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                   const isCopied = copiedBarcode === item.barcode;
                   return (
                     <div key={`${item.barcode}-${index}`} className="p-3 hover:bg-stone-50/50 transition-colors flex flex-col gap-1.5 group">
-                      {/* Ürün İsmi ve Adet */}
+                      {/* Ürün İsmi, Kopyalama ve Adet */}
                       <div className="flex items-start justify-between gap-2">
-                        <button
-                          onClick={() => onOpenProductAnalysis?.(item.barcode)}
-                          className="text-[11px] font-extrabold text-stone-900 leading-tight text-left hover:text-blue-600 hover:underline transition-all cursor-pointer truncate flex-1"
-                          title="Analiz panelini aç"
-                        >
-                          {item.name}
-                        </button>
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <button
+                            onClick={() => onOpenProductAnalysis?.(item.barcode)}
+                            className="text-[11px] font-extrabold text-stone-900 leading-tight text-left hover:text-blue-600 hover:underline transition-all cursor-pointer truncate"
+                            title="Analiz panelini aç"
+                          >
+                            {item.name}
+                          </button>
+                          <button
+                            onClick={() => handleCopyBarcode(item.barcode)}
+                            className={cn(
+                              "p-1 rounded-md transition-all active:scale-90 border shrink-0 cursor-pointer",
+                              isCopied 
+                                ? "bg-emerald-50 border-emerald-300 text-emerald-600 shadow-sm" 
+                                : "bg-stone-50 border-stone-200 text-stone-400 hover:bg-stone-100 hover:text-stone-800"
+                            )}
+                            title={isCopied ? "Kopyalandı!" : "Barkodu Kopyala"}
+                          >
+                            {isCopied ? <Check size={8} className="stroke-[3]" /> : <Copy size={8} />}
+                          </button>
+                        </div>
                         <span className="shrink-0 bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-lg border border-blue-200 font-mono shadow-sm">
                           {item.quantity} Kutu
                         </span>
                       </div>
 
-                      {/* Barkod ve Kopyalama */}
-                      <div className="flex items-center justify-between bg-stone-50 border border-stone-100 rounded-lg px-2 py-1">
-                        <span className="font-mono text-[9px] text-stone-500 font-bold">{item.barcode}</span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleCopyBarcode(item.barcode)}
-                            className={cn(
-                              "p-1 rounded transition-all active:scale-90 border",
-                              isCopied 
-                                ? "bg-emerald-50 border-emerald-300 text-emerald-600" 
-                                : "bg-white border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-850"
-                            )}
-                            title={isCopied ? "Kopyalandı!" : "Barkodu kopyala"}
-                          >
-                            {isCopied ? <Check size={10} className="stroke-[3]" /> : <Copy size={10} />}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Stok, Hız ve Kampanya Bilgileri */}
-                      <div className="flex items-center justify-between text-[9px] text-stone-400 font-bold">
-                        <div className="flex gap-2">
-                          <span>Stok: <span className={cn(item.stock > 0 ? "text-emerald-600" : "text-red-500")}>{item.stock}</span></span>
-                          <span>Hız: <span className="text-stone-700">{(item.speed * 30).toFixed(1)}/ay</span></span>
-                        </div>
-                        {item.groupName && (
-                          <span className="bg-stone-100 text-stone-500 px-1 py-0.2 rounded truncate max-w-[120px]" title={item.groupName}>
-                            {item.groupName}
+                      {/* Stok / Hız & Grup Stok / Hız Metrikleri */}
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 bg-stone-50 border border-stone-100 rounded-lg p-2 text-[9px] text-stone-500 font-bold">
+                        <div className="flex justify-between items-center">
+                          <span className="text-stone-400 font-medium">Stok / Hız:</span>
+                          <span className="font-mono">
+                            <span className={cn(item.stock > 0 ? "text-emerald-600 font-black" : "text-red-500 font-black")}>{item.stock}</span>
+                            <span className="text-stone-400 font-medium"> / </span>
+                            <span className="text-stone-700">{(item.speed * 30).toFixed(1)}</span>
                           </span>
-                        )}
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-stone-400 font-medium">Grup Stk/Hz:</span>
+                          <span className="font-mono">
+                            <span className="text-stone-800 font-black">{item.groupTotalStock}</span>
+                            <span className="text-stone-400 font-medium"> / </span>
+                            <span className="text-stone-700">{(item.groupTotalSpeed).toFixed(1)}</span>
+                          </span>
+                        </div>
                       </div>
 
                       {/* Kampanyalar (Barem Badgeleri) */}
