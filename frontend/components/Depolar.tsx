@@ -1656,6 +1656,22 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   const [movementSearchQuery, setMovementSearchQuery] = useState("");
   const [copiedBarcode, setCopiedBarcode] = useState<string | null>(null);
 
+  const [queryCache, setQueryCache] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    const loadCache = async () => {
+      try {
+        const c = await loadAndMigrateCache(gln || 'local');
+        if (c) {
+          setQueryCache(c);
+        }
+      } catch (err) {
+        console.error('Failed to load query cache in Depolar component:', err);
+      }
+    };
+    loadCache();
+  }, [gln]);
+
   const fetchMovementReport = async (days: number) => {
     setMovementLoading(true);
     try {
