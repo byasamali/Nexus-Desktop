@@ -76,20 +76,6 @@ def main():
         except Exception:
             cache = {}
 
-    db_path = os.path.join(base_dir, 'database', 'master_db.sqlite')
-    db_prices = {}
-    if os.path.exists(db_path):
-        try:
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT barkod, dsf, psf FROM products")
-            for r in cursor.fetchall():
-                db_prices[str(r[0]).strip()] = (float(r[1] or 0.0), float(r[2] or 0.0))
-            conn.close()
-        except Exception:
-            pass
-
     today_str = datetime.date.today().strftime('%Y-%m-%d')
     count = 0
 
@@ -161,30 +147,29 @@ def main():
             except Exception:
                 pass
 
-        # Resolve prices using database if available
-        db_price_entry = db_prices.get(barcode)
-        dsf_resolved = fiyat_val
-        psf_resolved = round(fiyat_val * 1.25, 2)
-        tvs_psf_resolved = round(tavsiye_edilen_psf, 2) if tavsiye_edilen_psf > 0 else psf_resolved
+        # Etiket fiyatını parse et
+        etiket_fiyat = 0.0
+        if 'ETIKETFIYATI' in df.columns:
+            try:
+                etf = row['ETIKETFIYATI']
+                if not pd.isna(etf):
+                    etiket_fiyat = float(etf)
+            except Exception:
+                pass
 
-        if db_price_entry:
-            db_dsf, db_psf = db_price_entry
-            if db_dsf > 0:
-                dsf_resolved = db_dsf
-            if db_psf > 0:
-                psf_resolved = db_psf
-                # If tavsiye_edilen_psf is 0, use the database psf
-                if tavsiye_edilen_psf <= 0:
-                    tvs_psf_resolved = db_psf
+        # Hangisi yüksekse onu PSF olarak belirle
+        resolved_psf = max(etiket_fiyat, tavsiye_edilen_psf)
+        if resolved_psf <= 0:
+            resolved_psf = fiyat_val  # Fallback
 
         # Önbelleğe yaz veya güncelle
         cache[barcode] = {
             "date": exp_date,
             "start_date": start_date,
             "stok": stok_durumu,
-            "fiyat_depocu": dsf_resolved,
-            "fiyat_etiket": psf_resolved,
-            "tavsiye_edilen_psf": tvs_psf_resolved,
+            "fiyat_depocu": fiyat_val,
+            "fiyat_etiket": round(resolved_psf, 2),
+            "tavsiye_edilen_psf": round(resolved_psf, 2),
             "mf_baremleri": mf_baremleri,
             "net_fiyatlar": net_fiyatlar,
             "kod": ilac_kodu,

@@ -293,12 +293,9 @@ export default function WidgetPage() {
     const cachedEntry = queryCache[barkod];
     console.log('[Widget resolvedData] barcode:', barkod, 'cachedEntry:', cachedEntry, 'queryCache keys:', Object.keys(queryCache).length, 'sample keys:', Object.keys(queryCache).slice(0, 5));
 
-    let price = selectedProduct.v3 || selectedProduct.rawUrun?.v3 || selectedProduct.v87 || selectedProduct.rawUrun?.v87 || 0;
-    if (price <= 0 && cachedEntry) {
+    let price = 0;
+    if (cachedEntry) {
       price = cachedEntry.tavsiye_edilen_psf || cachedEntry.fiyat_etiket || 0;
-    }
-    if (price <= 0) {
-      price = selectedProduct.v92 || selectedProduct.rawUrun?.v92 || selectedProduct.fiyat_depocu || selectedProduct.rawUrun?.fiyat_depocu || 0;
     }
 
     let barems: any[] = [];
