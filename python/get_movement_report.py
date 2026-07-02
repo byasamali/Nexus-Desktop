@@ -58,10 +58,11 @@ def main():
             print(json.dumps([]))
             sys.exit(0)
 
-        # Group by barcode and sum sales quantity
+        # Group by barcode and sum sales quantity, and get last sale date
         grouped = filtered_df.groupby('barkod').agg({
             'satis_adedi': 'sum',
-            'lokal_urun_adi': 'last'
+            'lokal_urun_adi': 'last',
+            'satis_tarihi': 'max'
         }).reset_index()
 
         # Sort by sales quantity descending
@@ -75,7 +76,8 @@ def main():
                 results.append({
                     "barcode": str(row['barkod']),
                     "name": str(row['lokal_urun_adi']),
-                    "quantity": int(qty) if qty.is_integer() else round(qty, 2)
+                    "quantity": int(qty) if qty.is_integer() else round(qty, 2),
+                    "last_sale_date": str(row['satis_tarihi'])
                 })
 
         print(json.dumps(results, ensure_ascii=False))

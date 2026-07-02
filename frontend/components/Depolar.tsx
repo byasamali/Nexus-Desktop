@@ -1656,6 +1656,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   const [movementList, setMovementList] = useState<any[]>([]);
   const [movementLoading, setMovementLoading] = useState(false);
   const [movementSearchQuery, setMovementSearchQuery] = useState("");
+  const [movementSortBy, setMovementSortBy] = useState<string>("qty_desc");
   const [copiedBarcode, setCopiedBarcode] = useState<string | null>(null);
 
   const [queryCache, setQueryCache] = useState<Record<string, any>>({});
@@ -1725,6 +1726,38 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
       item.name.toLowerCase().includes(q) || item.barcode.includes(q)
     );
   }, [enrichedMovements, movementSearchQuery]);
+
+  const sortedMovements = useMemo(() => {
+    const items = [...filteredMovements];
+    items.sort((a, b) => {
+      switch (movementSortBy) {
+        case 'stok_asc':
+          return (Number(a.stock) || 0) - (Number(b.stock) || 0);
+        case 'stok_desc':
+          return (Number(b.stock) || 0) - (Number(a.stock) || 0);
+        case 'grupstok_asc':
+          return (Number(a.groupTotalStock) || 0) - (Number(b.groupTotalStock) || 0);
+        case 'grupstok_desc':
+          return (Number(b.groupTotalStock) || 0) - (Number(a.groupTotalStock) || 0);
+        case 'tarih_desc':
+          {
+            const dateA = a.last_sale_date ? new Date(a.last_sale_date.replace(/-/g, '/')).getTime() : 0;
+            const dateB = b.last_sale_date ? new Date(b.last_sale_date.replace(/-/g, '/')).getTime() : 0;
+            return dateB - dateA;
+          }
+        case 'tarih_asc':
+          {
+            const dateA = a.last_sale_date ? new Date(a.last_sale_date.replace(/-/g, '/')).getTime() : 0;
+            const dateB = b.last_sale_date ? new Date(b.last_sale_date.replace(/-/g, '/')).getTime() : 0;
+            return dateA - dateB;
+          }
+        case 'qty_desc':
+        default:
+          return b.quantity - a.quantity;
+      }
+    });
+    return items;
+  }, [filteredMovements, movementSortBy]);
 
   const handleCopyBarcode = (barcode: string) => {
     navigator.clipboard.writeText(barcode);
@@ -3662,7 +3695,7 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                     setMovementDays(days);
                     fetchMovementReport(days);
                   }}
-                  className="flex-1 text-[11px] border border-stone-200 bg-white rounded-xl px-2.5 py-1.5 outline-none font-bold text-stone-700 shadow-sm cursor-pointer hover:border-blue-400 transition-all"
+                  className="w-[110px] text-[11px] border border-stone-200 bg-white rounded-xl px-2 py-1.5 outline-none font-bold text-stone-700 shadow-sm cursor-pointer hover:border-blue-400 transition-all shrink-0"
                 >
                   <option value="1">Son 1 Gün</option>
                   <option value="2">Son 2 Gün</option>
@@ -3672,13 +3705,26 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                   <option value="15">Son 15 Gün</option>
                   <option value="30">Son 30 Gün</option>
                 </select>
+                <select
+                  value={movementSortBy}
+                  onChange={(e) => setMovementSortBy(e.target.value)}
+                  className="flex-1 text-[11px] border border-stone-200 bg-white rounded-xl px-2 py-1.5 outline-none font-bold text-stone-700 shadow-sm cursor-pointer hover:border-blue-400 transition-all min-w-0"
+                >
+                  <option value="qty_desc">Satış (Çoktan Aza)</option>
+                  <option value="stok_asc">Stok (Artan)</option>
+                  <option value="stok_desc">Stok (Azalan)</option>
+                  <option value="tarih_desc">Tarih (En Yeni)</option>
+                  <option value="tarih_asc">Tarih (En Eski)</option>
+                  <option value="grupstok_asc">Grup Stoğu (Artan)</option>
+                  <option value="grupstok_desc">Grup Stoğu (Azalan)</option>
+                </select>
                 <button
                   onClick={() => fetchMovementReport(movementDays)}
                   disabled={movementLoading}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black rounded-xl shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
+                  className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black rounded-xl shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
+                  title="Yenile"
                 >
                   <RefreshCw size={11} className={movementLoading ? "animate-spin" : ""} />
-                  Yenile
                 </button>
               </div>
 
@@ -3709,12 +3755,12 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                   <RefreshCw className="h-6 w-6 animate-spin text-blue-500" />
                   <span className="text-[10px] font-bold">Hareketler hesaplanıyor...</span>
                 </div>
-              ) : filteredMovements.length === 0 ? (
+              ) : sortedMovements.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-48 text-stone-400 text-center px-4">
                   <span className="text-[10px] font-bold">Bu tarih aralığında hareket bulunamadı.</span>
                 </div>
               ) : (
-                filteredMovements.map((item, index) => {
+                sortedMovements.map((item, index) => {
                   const isCopied = copiedBarcode === item.barcode;
                   return (
                     <div key={`${item.barcode}-${index}`} className="p-3 hover:bg-stone-50/50 transition-colors flex flex-col gap-1.5 group">
@@ -3777,6 +3823,12 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
                               {typeof b === 'string' ? b : `${b.ana}+${b.mf}`}
                             </span>
                           ))}
+                        </div>
+                      )}
+
+                      {item.last_sale_date && (
+                        <div className="text-[8px] text-stone-400 font-bold mt-1 text-right">
+                          Son İşlem: <span className="text-stone-600 font-mono">{item.last_sale_date.substring(0, 16)}</span>
                         </div>
                       )}
                     </div>
