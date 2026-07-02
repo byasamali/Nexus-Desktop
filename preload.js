@@ -32,7 +32,8 @@ window.go = {
       StopDepoProxy: (proxyURL) => Promise.resolve(),
       OpenURLInBrowser: (targetURL) => ipcRenderer.invoke('wails:OpenURLInBrowser', targetURL),
       GetWebviewPreloadPath: () => ipcRenderer.invoke('wails:GetWebviewPreloadPath'),
-      AppendOrderResult: (gln, entry) => ipcRenderer.invoke('wails:AppendOrderResult', gln, entry)
+      AppendOrderResult: (gln, entry) => ipcRenderer.invoke('wails:AppendOrderResult', gln, entry),
+      GetMovementReport: (gln, days) => ipcRenderer.invoke('wails:GetMovementReport', gln, days)
     }
   }
 };

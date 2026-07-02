@@ -346,6 +346,38 @@ ipcMain.handle('wails:ParseSelcukCampaigns', async (event, gln, depo = 'SELCUK')
   });
 });
 
+ipcMain.handle('wails:GetMovementReport', async (event, gln, days) => {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(pythonDir, 'get_movement_report.py');
+    let pythonProcess;
+    if (fs.existsSync(pythonVenvPython)) {
+      pythonProcess = spawn(pythonVenvPython, [scriptPath, '--gln', gln, '--days', String(days)]);
+    } else {
+      pythonProcess = spawn('python', [scriptPath, '--gln', gln, '--days', String(days)]);
+    }
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString('utf8');
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString('utf8');
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`get_movement_report.py failed with code ${code}. Stderr: ${stderrData}`);
+        reject(new Error(stderrData || `Exit code ${code}`));
+        return;
+      }
+      resolve(stdoutData.trim());
+    });
+  });
+});
+
 ipcMain.handle('wails:AppendOrderResult', async (event, gln, entry) => {
   try {
     const tenantDir = path.join(pythonDir, 'tenants', gln);

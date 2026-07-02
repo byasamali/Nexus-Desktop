@@ -5,7 +5,7 @@ import {
   Globe, Plus, X, Eye, EyeOff, Trash2,
   Copy, Check, ExternalLink, RefreshCw,
   ShoppingCart, Store, Lock, User, Link2,
-  Search, ArrowLeft, ArrowRight, Truck, Settings, Download
+  Search, ArrowLeft, ArrowRight, Truck, Settings, Download, Activity
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1647,6 +1647,72 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
   // Webview element referansları (GEK executeJavaScript için)
   const localWebviewRefs = useRef<Record<string, any>>({});
   const webviewRefs = extWebviewRefs || localWebviewRefs;
+
+  // Hareket Raporu Eklentisi State'leri
+  const [showMovementPanel, setShowMovementPanel] = useState(false);
+  const [movementDays, setMovementDays] = useState(7);
+  const [movementList, setMovementList] = useState<any[]>([]);
+  const [movementLoading, setMovementLoading] = useState(false);
+  const [movementSearchQuery, setMovementSearchQuery] = useState("");
+  const [copiedBarcode, setCopiedBarcode] = useState<string | null>(null);
+
+  const fetchMovementReport = async (days: number) => {
+    setMovementLoading(true);
+    try {
+      const app = (window as any).go?.main?.App;
+      if (app?.GetMovementReport) {
+        const raw = await app.GetMovementReport(gln, days);
+        if (raw && raw !== '[]') {
+          const parsed = JSON.parse(raw);
+          setMovementList(parsed);
+        } else {
+          setMovementList([]);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to get movement report:', e);
+    } finally {
+      setMovementLoading(false);
+    }
+  };
+
+  const enrichedMovements = useMemo(() => {
+    return movementList.map(item => {
+      const localDetail = productMap[item.barcode];
+      const cachedCampaign = queryCache[item.barcode];
+      let parsedBarems = cachedCampaign?.mf_baremleri || localDetail?.rawUrun?.mf_baremleri || [];
+      if (typeof parsedBarems === 'string') {
+        try {
+          parsedBarems = JSON.parse(parsedBarems);
+        } catch (e) {
+          parsedBarems = [];
+        }
+      }
+      return {
+        ...item,
+        stock: localDetail?.stock ?? (localDetail?.v4 ?? 0),
+        speed: localDetail?.speed ?? (localDetail?.v20 ?? 0),
+        groupTotalStock: localDetail?.groupTotalStock ?? 0,
+        groupTotalSpeed: localDetail?.groupTotalSpeed ?? 0,
+        groupName: localDetail?.groupName ?? localDetail?.grup_adi ?? '',
+        barems: Array.isArray(parsedBarems) ? parsedBarems : []
+      };
+    });
+  }, [movementList, productMap, queryCache]);
+
+  const filteredMovements = useMemo(() => {
+    const q = movementSearchQuery.toLowerCase().trim();
+    if (!q) return enrichedMovements;
+    return enrichedMovements.filter(item => 
+      item.name.toLowerCase().includes(q) || item.barcode.includes(q)
+    );
+  }, [enrichedMovements, movementSearchQuery]);
+
+  const handleCopyBarcode = (barcode: string) => {
+    navigator.clipboard.writeText(barcode);
+    setCopiedBarcode(barcode);
+    setTimeout(() => setCopiedBarcode(null), 2000);
+  };
 
   // Bulk query states
   const [bulkQueryResult, setBulkQueryResult] = useState<Record<string, { ok: boolean; stok?: number; fiyat_depocu?: number; mf?: string; net?: number; error?: string }>>({});
@@ -3358,7 +3424,11 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
         {/* GEK Ürünleri Toggle Butonu */}
         {gekProducts.length > 0 && (
           <button
-            onClick={() => setShowGekPanel(v => !v)}
+            onClick={() => {
+              const nextVal = !showGekPanel;
+              setShowGekPanel(nextVal);
+              if (nextVal) setShowMovementPanel(false);
+            }}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-bold transition-all shrink-0",
               showGekPanel
@@ -3373,6 +3443,27 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
             </span>
           </button>
         )}
+
+        {/* Hareket Raporu Toggle Butonu */}
+        <button
+          onClick={() => {
+            const nextVal = !showMovementPanel;
+            setShowMovementPanel(nextVal);
+            if (nextVal) {
+              fetchMovementReport(movementDays);
+              setShowGekPanel(false);
+            }
+          }}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-bold transition-all shrink-0",
+            showMovementPanel
+              ? "border-blue-500 bg-blue-50 text-blue-700"
+              : "border-stone-200 bg-white text-stone-500 hover:border-blue-400 hover:bg-blue-50"
+          )}
+        >
+          <Activity size={11} className={showMovementPanel ? "text-blue-600" : "text-stone-400"} />
+          Hareket Raporu
+        </button>
       </div>
 
       {/* ALT BÖLÜM */}
@@ -3497,6 +3588,161 @@ export default function Depolar({ cart, gln, onBack, webviewRefs: extWebviewRefs
               <p className="text-[9px] text-orange-500 font-medium leading-tight">
                 💡 GEK'te arama yaptıkça ürünler otomatik eklenir
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* Hareket Raporu Paneli (toggle) */}
+        {showMovementPanel && (
+          <div className="w-[340px] min-w-[320px] flex flex-col h-full border-l border-stone-200 bg-white shadow-lg shrink-0">
+            {/* Panel Başlık */}
+            <div className="flex items-center justify-between px-4 py-3 bg-blue-50/60 border-b border-stone-200 shrink-0">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-blue-600 animate-pulse" />
+                <p className="text-xs font-black text-stone-850 uppercase tracking-wider">Hareket Raporu</p>
+                {filteredMovements.length > 0 && (
+                  <span className="text-[9px] bg-blue-200 text-blue-800 font-extrabold px-2 py-0.5 rounded-full leading-none">
+                    {filteredMovements.length} Ürün
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowMovementPanel(false)}
+                className="p-1 rounded-lg hover:bg-stone-200 text-stone-500 hover:text-stone-850 transition-all active:scale-95"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Kontroller */}
+            <div className="p-3 border-b border-stone-100 bg-stone-50/55 flex flex-col gap-2 shrink-0">
+              <div className="flex gap-2">
+                <select
+                  value={movementDays}
+                  onChange={(e) => {
+                    const days = parseInt(e.target.value);
+                    setMovementDays(days);
+                    fetchMovementReport(days);
+                  }}
+                  className="flex-1 text-[11px] border border-stone-200 bg-white rounded-xl px-2.5 py-1.5 outline-none font-bold text-stone-700 shadow-sm cursor-pointer hover:border-blue-400 transition-all"
+                >
+                  <option value="1">Son 1 Gün</option>
+                  <option value="2">Son 2 Gün</option>
+                  <option value="3">Son 3 Gün</option>
+                  <option value="5">Son 5 Gün</option>
+                  <option value="7">Son 7 Gün</option>
+                  <option value="15">Son 15 Gün</option>
+                  <option value="30">Son 30 Gün</option>
+                </select>
+                <button
+                  onClick={() => fetchMovementReport(movementDays)}
+                  disabled={movementLoading}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black rounded-xl shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  <RefreshCw size={11} className={movementLoading ? "animate-spin" : ""} />
+                  Yenile
+                </button>
+              </div>
+
+              <div className="relative">
+                <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="text"
+                  placeholder="Rapor içinde ara..."
+                  value={movementSearchQuery}
+                  onChange={(e) => setMovementSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 border border-stone-200 rounded-xl text-[11px] outline-none placeholder-stone-400 font-medium focus:border-blue-500 focus:bg-white transition-all bg-white"
+                />
+                {movementSearchQuery && (
+                  <button
+                    onClick={() => setMovementSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Sonuç Listesi */}
+            <div className="flex-1 overflow-y-auto divide-y divide-stone-100 scrollbar-thin">
+              {movementLoading ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-2 text-stone-400">
+                  <RefreshCw className="h-6 w-6 animate-spin text-blue-500" />
+                  <span className="text-[10px] font-bold">Hareketler hesaplanıyor...</span>
+                </div>
+              ) : filteredMovements.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-stone-400 text-center px-4">
+                  <span className="text-[10px] font-bold">Bu tarih aralığında hareket bulunamadı.</span>
+                </div>
+              ) : (
+                filteredMovements.map((item, index) => {
+                  const isCopied = copiedBarcode === item.barcode;
+                  return (
+                    <div key={`${item.barcode}-${index}`} className="p-3 hover:bg-stone-50/50 transition-colors flex flex-col gap-1.5 group">
+                      {/* Ürün İsmi ve Adet */}
+                      <div className="flex items-start justify-between gap-2">
+                        <button
+                          onClick={() => onOpenProductAnalysis?.(item.barcode)}
+                          className="text-[11px] font-extrabold text-stone-900 leading-tight text-left hover:text-blue-600 hover:underline transition-all cursor-pointer truncate flex-1"
+                          title="Analiz panelini aç"
+                        >
+                          {item.name}
+                        </button>
+                        <span className="shrink-0 bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-lg border border-blue-200 font-mono shadow-sm">
+                          {item.quantity} Kutu
+                        </span>
+                      </div>
+
+                      {/* Barkod ve Kopyalama */}
+                      <div className="flex items-center justify-between bg-stone-50 border border-stone-100 rounded-lg px-2 py-1">
+                        <span className="font-mono text-[9px] text-stone-500 font-bold">{item.barcode}</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleCopyBarcode(item.barcode)}
+                            className={cn(
+                              "p-1 rounded transition-all active:scale-90 border",
+                              isCopied 
+                                ? "bg-emerald-50 border-emerald-300 text-emerald-600" 
+                                : "bg-white border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-850"
+                            )}
+                            title={isCopied ? "Kopyalandı!" : "Barkodu kopyala"}
+                          >
+                            {isCopied ? <Check size={10} className="stroke-[3]" /> : <Copy size={10} />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Stok, Hız ve Kampanya Bilgileri */}
+                      <div className="flex items-center justify-between text-[9px] text-stone-400 font-bold">
+                        <div className="flex gap-2">
+                          <span>Stok: <span className={cn(item.stock > 0 ? "text-emerald-600" : "text-red-500")}>{item.stock}</span></span>
+                          <span>Hız: <span className="text-stone-700">{(item.speed * 30).toFixed(1)}/ay</span></span>
+                        </div>
+                        {item.groupName && (
+                          <span className="bg-stone-100 text-stone-500 px-1 py-0.2 rounded truncate max-w-[120px]" title={item.groupName}>
+                            {item.groupName}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Kampanyalar (Barem Badgeleri) */}
+                      {item.barems.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {item.barems.map((b: any, bi: number) => (
+                            <span
+                              key={bi}
+                              className="text-[8px] font-black font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                            >
+                              {typeof b === 'string' ? b : `${b.ana}+${b.mf}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         )}
