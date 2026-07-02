@@ -24,7 +24,7 @@ window.go = {
       LoadLocalJSON: (gln, filename) => ipcRenderer.invoke('wails:LoadLocalJSON', gln, filename),
       SaveLocalJSON: (gln, filename, content) => ipcRenderer.invoke('wails:SaveLocalJSON', gln, filename, content),
       SaveLocalBase64File: (gln, filename, base64Data) => ipcRenderer.invoke('wails:SaveLocalBase64File', gln, filename, base64Data),
-      ParseSelcukCampaigns: (gln) => ipcRenderer.invoke('wails:ParseSelcukCampaigns', gln),
+      ParseSelcukCampaigns: (gln, depo) => ipcRenderer.invoke('wails:ParseSelcukCampaigns', gln, depo),
       TriggerSyncAndAnalysis: (gln, fullSync) => ipcRenderer.invoke('wails:TriggerSyncAndAnalysis', gln, fullSync),
       RunCategoryAction: (action, paramsJSON) => ipcRenderer.invoke('wails:RunCategoryAction', action, paramsJSON),
       RunDbQuery: (query, paramsJSON) => ipcRenderer.invoke('wails:RunDbQuery', query, paramsJSON),
@@ -35,6 +35,15 @@ window.go = {
       AppendOrderResult: (gln, entry) => ipcRenderer.invoke('wails:AppendOrderResult', gln, entry)
     }
   }
+};
+
+// Use a separate namespace that won't be overwritten by any Wails bindings
+// window.go.widget was being erased — this namespace is safe
+window.__widgetBridge = {
+  ResizeWindow: (height) => ipcRenderer.invoke('widget:resize', height),
+  SetMouseIgnore: (ignore) => ipcRenderer.invoke('widget:set-mouse', ignore),
+  HideWindow: () => ipcRenderer.invoke('widget:hide'),
+  OpenDevTools: () => ipcRenderer.invoke('widget:dev-tools')
 };
 
 window.runtime = {
@@ -48,3 +57,4 @@ window.runtime = {
 };
 
 console.log("Wails bindings successfully injected into window object.");
+console.log("Widget bridge available at window.__widgetBridge:", !!window.__widgetBridge);

@@ -21,9 +21,11 @@ def format_date(val, today_str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--gln', type=str, default='local')
+    parser.add_argument('--depo', type=str, default='SELCUK')
     args = parser.parse_args()
 
     gln = args.gln
+    depo_key = args.depo.upper().strip()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     tenant_dir = os.path.join(base_dir, 'tenants', gln)
     
@@ -54,51 +56,25 @@ def main():
     
     # Otomatik migrasyon ve önbelleği yükle
     cache = {}
-    if not os.path.exists(cache_path):
-        # Eski depoları birleştirip migrasyon yap
-        old_files = {
-            'selcuk_query_cache.json': 'SELCUK',
-            'as_ecza_query_cache.json': 'AS_ECZA',
-            'gek_query_cache.json': 'GEK',
-            'alliance_query_cache.json': 'ALLIANCE',
-            'nevzat_query_cache.json': 'NEVZAT',
-            'cam_query_cache.json': 'CAM'
-        }
-        for filename, depo_key in old_files.items():
-            old_path = os.path.join(base_dir, 'tenants', gln, filename)
-            if os.path.exists(old_path):
-                try:
-                    with open(old_path, 'r', encoding='utf-8') as f:
-                        old_data = json.load(f)
-                    for barcode, entry in old_data.items():
-                        if barcode not in cache:
-                            cache[barcode] = {}
-                        if isinstance(entry, dict):
-                            entry_copy = entry.copy()
-                            if 'depo' not in entry_copy:
-                                entry_copy['depo'] = depo_key
-                            cache[barcode][depo_key] = entry_copy
-                except Exception:
-                    pass
-    else:
+    if os.path.exists(cache_path):
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
+                raw_cache = json.load(f)
+            
+            # Flatten raw_cache
+            for barcode, val in raw_cache.items():
+                if isinstance(val, dict):
+                    # Check if there are nested warehouse keys (e.g. SELCUK, AS_ECZA)
+                    nested_keys = [k for k, v in val.items() if isinstance(v, dict) and 'mf_baremleri' in v]
+                    if nested_keys:
+                        # Use the first one or merge them
+                        cache[barcode] = val[nested_keys[0]]
+                    else:
+                        cache[barcode] = val
+                else:
+                    cache[barcode] = val
         except Exception:
             cache = {}
-
-    # Eski biçimdeki (nested olmayan) verileri biçimlendir
-    if cache:
-        try:
-            first_key = list(cache.keys())[0]
-            if first_key and isinstance(cache[first_key], dict) and 'date' in cache[first_key]:
-                old_cache = cache
-                cache = {}
-                for barcode, entry in old_cache.items():
-                    depo_name = str(entry.get('depo', 'SELCUK')).upper().replace(' ', '_')
-                    cache[barcode] = {depo_name: entry}
-        except Exception:
-            pass
 
     today_str = datetime.date.today().strftime('%Y-%m-%d')
     count = 0
@@ -161,19 +137,28 @@ def main():
         start_date = format_date(row['KAMPANYA BASLANGIC TARIHI'], today_str)
         exp_date = format_date(row['KAMPANYA BITIS TARIHI'], today_str)
 
+        # Tavsiye edilen satış fiyatını parse et
+        tavsiye_edilen_psf = 0.0
+        if 'TAVSIYEEDILENSATISFIYATI' in df.columns:
+            try:
+                tpsf = row['TAVSIYEEDILENSATISFIYATI']
+                if not pd.isna(tpsf):
+                    tavsiye_edilen_psf = float(tpsf)
+            except Exception:
+                pass
+
         # Önbelleğe yaz veya güncelle
-        if barcode not in cache:
-            cache[barcode] = {}
-        cache[barcode]["SELCUK"] = {
+        cache[barcode] = {
             "date": exp_date,
             "start_date": start_date,
             "stok": stok_durumu,
             "fiyat_depocu": fiyat_val,
             "fiyat_etiket": round(fiyat_val * 1.25, 2),
+            "tavsiye_edilen_psf": round(tavsiye_edilen_psf, 2) if tavsiye_edilen_psf > 0 else round(fiyat_val * 1.25, 2),
             "mf_baremleri": mf_baremleri,
             "net_fiyatlar": net_fiyatlar,
             "kod": ilac_kodu,
-            "depo": "SELCUK"
+            "depo": depo_key
         }
         count += 1
 

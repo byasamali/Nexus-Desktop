@@ -71,17 +71,42 @@ function getCacheKey(depoId: string): string {
 
 async function loadAndMigrateCache(gln: string): Promise<any> {
   const tenantGln = gln || 'local';
+  
+  // 1. First try reading query_cache.json
   try {
     const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
     if (rawCombined && rawCombined !== '{}') {
       const parsed = JSON.parse(rawCombined);
       const firstKey = Object.keys(parsed)[0];
-      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
-        return parsed;
+      if (firstKey && parsed[firstKey]) {
+        const val = parsed[firstKey];
+        // If it's already flat, return it directly
+        if (val.hasOwnProperty('date') || val.hasOwnProperty('mf_baremleri') || val.hasOwnProperty('fiyat_depocu')) {
+          return parsed;
+        }
+        
+        // If it's nested (e.g. { barcode: { SELCUK: { ... } } }), flatten it!
+        const flattened: any = {};
+        for (const [barcode, entry] of Object.entries(parsed)) {
+          if (entry && typeof entry === 'object') {
+            const nestedKeys = Object.keys(entry).filter(k => (entry as any)[k] && typeof (entry as any)[k] === 'object' && !Array.isArray((entry as any)[k]));
+            if (nestedKeys.length > 0) {
+              flattened[barcode] = (entry as any)[nestedKeys[0]];
+            } else {
+              flattened[barcode] = entry;
+            }
+          }
+        }
+        // Save the flattened version back
+        try {
+          await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(flattened, null, 2));
+        } catch (err) {}
+        return flattened;
       }
     }
   } catch (err) {}
 
+  // 2. If query_cache.json doesn't exist, migrate from old files in FLAT format
   const combined: any = {};
   const oldFiles = [
     { file: 'selcuk_query_cache.json', key: 'SELCUK' },
@@ -98,12 +123,13 @@ async function loadAndMigrateCache(gln: string): Promise<any> {
       if (raw && raw !== '{}') {
         const data = JSON.parse(raw);
         for (const [barcode, entry] of Object.entries(data)) {
-          if (!combined[barcode]) combined[barcode] = {};
           if (entry && typeof entry === 'object') {
-            combined[barcode][item.key] = {
-              ...(entry as any),
-              depo: (entry as any).depo || item.key
-            };
+            // Keep the first one that has data
+            if (!combined[barcode]) {
+              combined[barcode] = {
+                ...(entry as any)
+              };
+            }
           }
         }
       }
@@ -768,6 +794,32 @@ export default function OrderCockpit() {
   });
   const [urgentSkipMfQuery, setUrgentSkipMfQuery] = useState<boolean>(false);
   const [mfQueryProduct, setMfQueryProduct] = useState<any>(null);
+
+  // 📢 Aktif Kampanyalar Modülü State'leri
+  const [showActiveCampaignsModal, setShowActiveCampaignsModal] = useState(false);
+  const [copiedCampaignBarkod, setCopiedCampaignBarkod] = useState<string | null>(null);
+  const [campaignCarryingCost, setCampaignCarryingCost] = useState<number>(5);
+  const [campaignMaxDays, setCampaignMaxDays] = useState<number>(180);
+  const [campaignSearchQuery, setCampaignSearchQuery] = useState('');
+  const [campaignCache, setCampaignCache] = useState<any>({});
+  const [loadingCampaignCache, setLoadingCampaignCache] = useState(false);
+
+  useEffect(() => {
+    if (showActiveCampaignsModal) {
+      setLoadingCampaignCache(true);
+      const tenantGln = data?.gln || 'local';
+      loadAndMigrateCache(tenantGln)
+        .then((res) => {
+          setCampaignCache(res || {});
+        })
+        .catch((err) => {
+          console.error("Kampanya cache yuklenemedi:", err);
+        })
+        .finally(() => {
+          setLoadingCampaignCache(false);
+        });
+    }
+  }, [showActiveCampaignsModal, data?.gln]);
   const [selectedMfWarehouse, setSelectedMfWarehouse] = useState<string>(() => {
     const active = loadDepolar().filter(d => d.enabled !== false);
     return active.length > 0 ? active[0].id : 'as_ecza';
@@ -1150,7 +1202,7 @@ export default function OrderCockpit() {
     try {
       const gln = data?.gln || 'local';
       const todayStr = new Date().toLocaleDateString('en-CA');
-      let cacheFile = '';
+      let cacheFile = 'query_cache.json';
 
     // B. Her simülasyon öncesi değişen satırlar için tarama yapsın
     if (appSettings.scan_before_simulation) {
@@ -1511,7 +1563,7 @@ export default function OrderCockpit() {
         const need = Math.max(0, Math.ceil(rawNeed));
 
         const cacheKey = getCacheKey(aiSimulationWarehouse);
-        const cached = cache[barcode] ? (cache[barcode][cacheKey] || (cache[barcode].date ? cache[barcode] : undefined)) : undefined;
+        const cached = cache[barcode] ? (cache[barcode].date ? cache[barcode] : cache[barcode][cacheKey]) : undefined;
         let detail: any = null;
         let mfList: string[] = [];
         let netList: string[] = [];
@@ -1789,11 +1841,13 @@ export default function OrderCockpit() {
             });
 
             // Canlı sorguyu önbelleğe yazıyoruz
+            let tmpTvsPsf = parseFloat(kart.ZTVS_FIYATI || kart.TVS_FIYATI || detailData?.ZTVS_FIYATI || detailData?.TVS_FIYATI || 0) || psfVal;
             cache[barcode] = {
               date: todayStr,
               stok: stokVal,
               fiyat_depocu: dsfVal,
               fiyat_etiket: psfVal,
+              tavsiye_edilen_psf: tmpTvsPsf,
               mf_baremleri: mfList,
               net_fiyatlar: netList,
               kod: queryResult.matnr || '',
@@ -1921,6 +1975,7 @@ export default function OrderCockpit() {
               stok: stokVal,
               fiyat_depocu: dsfVal,
               fiyat_etiket: psfVal,
+              tavsiye_edilen_psf: psfVal,
               mf_baremleri: mfList,
               net_fiyatlar: netList,
               kod: queryResult?.item?.Code || '',
@@ -2052,11 +2107,13 @@ export default function OrderCockpit() {
             psfVal = parsePriceLocal(detail.tavsiyeEdilenSatisFiyati || detail.SonFiyat || detail.etiketFiyati);
 
             // Canlı sorguyu önbelleğe yazıyoruz
+            const tvsPsf = parsePriceLocal(detail.tavsiyeEdilenSatisFiyati) || psfVal;
             cache[barcode] = {
               date: todayStr,
               stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
               fiyat_depocu: dsfVal,
               fiyat_etiket: psfVal,
+              tavsiye_edilen_psf: tvsPsf,
               mf_baremleri: mfList,
               net_fiyatlar: netList,
               kod: detail.kod || '',
@@ -2800,7 +2857,7 @@ export default function OrderCockpit() {
       const gln = data?.gln || 'local';
       const todayStr = new Date().toLocaleDateString('en-CA');
       const targetDaysLimit = urgentDaysLimit === 'aySonu' ? getDaysUntilMonthEnd() : urgentDaysLimit;
-      let cacheFile = '';
+      let cacheFile = 'query_cache.json';
 
       if (appSettings.scan_before_simulation) {
         setSyncStatusMsg("Simülasyon öncesi değişen satırlar taranıyor...");
@@ -3018,8 +3075,7 @@ export default function OrderCockpit() {
           // ── SKIP MODE: depodan sorgu yapma, bellekte varsa kullan ──────────────
           if (urgentSkipMfQuery) {
             setUrgentProgress(`Simüle ediliyor [${i + 1}/${productsToQuery.length}]: ${name}`);
-            const urgentCacheKey = getCacheKey(urgentWarehouse);
-            const cachedEntry = cache[barcode] ? (cache[barcode][urgentCacheKey] || (cache[barcode].date ? cache[barcode] : undefined)) : undefined;
+            const cachedEntry = cache[barcode] ? (cache[barcode].date ? cache[barcode] : cache[barcode][urgentCacheKey]) : undefined;
             const isFromCache = !!(cachedEntry && cachedEntry.date >= todayStr && (!cachedEntry.start_date || cachedEntry.start_date <= todayStr));
             const dsfSkip  = isFromCache ? (cachedEntry.fiyat_depocu || 0) : 0;
             const psfSkip  = isFromCache ? (cachedEntry.fiyat_etiket || 0) : 0;
@@ -3083,8 +3139,7 @@ export default function OrderCockpit() {
           }
           // ── END SKIP MODE ────────────────────────────────────────────────────────
 
-          const urgentCacheKey = getCacheKey(urgentWarehouse);
-          const cached = cache[barcode] ? (cache[barcode][urgentCacheKey] || (cache[barcode].date ? cache[barcode] : undefined)) : undefined;
+          const cached = cache[barcode] ? (cache[barcode].date ? cache[barcode] : cache[barcode][urgentCacheKey]) : undefined;
           let detail: any = null;
           let mfList: string[] = [];
           let netList: string[] = [];
@@ -3330,11 +3385,13 @@ export default function OrderCockpit() {
                 if (c.NET && Number(c.NET) > 0) netList.push(String(c.NET));
               });
 
+              let tmpTvsPsf = parseFloat(kart.ZTVS_FIYATI || kart.TVS_FIYATI || detailData?.ZTVS_FIYATI || detailData?.TVS_FIYATI || 0) || psfVal;
               cache[barcode] = {
                 date: todayStr,
                 stok: stokVal,
                 fiyat_depocu: dsfVal,
                 fiyat_etiket: psfVal,
+                tavsiye_edilen_psf: tmpTvsPsf,
                 mf_baremleri: mfList,
                 net_fiyatlar: netList,
                 kod: queryResult.matnr || '',
@@ -3449,6 +3506,7 @@ export default function OrderCockpit() {
                 stok: stokVal,
                 fiyat_depocu: dsfVal,
                 fiyat_etiket: psfVal,
+                tavsiye_edilen_psf: psfVal,
                 mf_baremleri: mfList,
                 net_fiyatlar: netList,
                 kod: queryResult?.item?.Code || '',
@@ -3576,11 +3634,13 @@ export default function OrderCockpit() {
               dsfVal = parsePriceLocal(detail.depocuFiyati);
               psfVal = parsePriceLocal(detail.tavsiyeEdilenSatisFiyati || detail.SonFiyat || detail.etiketFiyati);
 
+              const tvsPsf = parsePriceLocal(detail.tavsiyeEdilenSatisFiyati) || psfVal;
               cache[barcode] = {
                 date: todayStr,
                 stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
                 fiyat_depocu: dsfVal,
                 fiyat_etiket: psfVal,
+                tavsiye_edilen_psf: tvsPsf,
                 mf_baremleri: mfList,
                 net_fiyatlar: netList,
                 kod: detail.kod || '',
@@ -4283,6 +4343,50 @@ export default function OrderCockpit() {
     return map;
   }, [data]);
 
+  const productDetailsMap = useMemo(() => {
+    const map: Record<string, { ad: string, stok: number, hiz: number, groupStok: number, groupHiz: number, rawUrun: any, grupId?: string }> = {};
+    if (data?.gruplar) {
+      data.gruplar.forEach((g: any) => {
+        const groupLeaderBarcode = g.detaylar?.[0]?.v1 || '';
+        const groupTotalStock = (g.detaylar || []).reduce((sum: number, u: any) => sum + (Number(u.v4) || 0), 0);
+        const groupTotalSpeed = (g.detaylar || []).reduce((sum: number, u: any) => sum + (Number(u.v20) || 0), 0) * 30;
+        (g.detaylar || []).forEach((u: any) => {
+          map[u.v1] = {
+            ad: u.v2 || 'Bilinmeyen Ürün',
+            stok: Number(u.v4) || 0,
+            hiz: (Number(u.v20) || 0) * 30,
+            groupStok: groupTotalStock,
+            groupHiz: groupTotalSpeed,
+            rawUrun: u,
+            grupId: groupLeaderBarcode
+          };
+        });
+      });
+    }
+    if (data?.miad_risk_listesi) {
+      data.miad_risk_listesi.forEach((u: any) => {
+        if (u.barkod && !map[u.barkod]) {
+          map[u.barkod] = {
+            ad: u.urun_adi || 'Bilinmeyen Ürün',
+            stok: Number(u.stok) || 0,
+            hiz: (Number(u.v20) || 0) * 30,
+            groupStok: Number(u.stok) || 0,
+            groupHiz: (Number(u.v20) || 0) * 30,
+            grupId: u.barkod,
+            rawUrun: {
+              v1: u.barkod,
+              v2: u.urun_adi,
+              v4: u.stok,
+              v20: u.v20 || 0,
+              ...u
+            }
+          };
+        }
+      });
+    }
+    return map;
+  }, [data]);
+
   const getFilteredGroups = () => {
     if (!data?.gruplar) return [];
     const q = searchQuery.toLowerCase();
@@ -4505,6 +4609,32 @@ export default function OrderCockpit() {
 
   const isMainView = activeTab === 'oneri';
 
+  const widgetQueryRef = useRef<any>(null);
+
+  useEffect(() => {
+    const electron = typeof window !== 'undefined' && (window as any).require ? (window as any).require('electron') : null;
+    const ipcRenderer = electron ? electron.ipcRenderer : null;
+    
+    if (ipcRenderer) {
+      const handleTriggerQuery = async (event: any, payload: any) => {
+        const { barcode, warehouseId, urun } = payload;
+        try {
+          if (widgetQueryRef.current) {
+            await widgetQueryRef.current(urun, warehouseId, true);
+          }
+          ipcRenderer.send('widget:query-finished', { barcode, warehouseId });
+        } catch (err) {
+          console.error('[Widget Query Trigger Error]:', err);
+          ipcRenderer.send('widget:query-finished', { barcode, warehouseId, error: String(err) });
+        }
+      };
+      ipcRenderer.on('widget:trigger-query', handleTriggerQuery);
+      return () => {
+        ipcRenderer.off('widget:trigger-query', handleTriggerQuery);
+      };
+    }
+  }, []);
+
   if (loading) return (
     <div className="flex h-screen items-center justify-center bg-stone-50">
       <div className="flex flex-col items-center gap-4">
@@ -4533,7 +4663,7 @@ export default function OrderCockpit() {
   // Depolar sekmesi sidebar'ı gizler ve tam ekran açılır
   const isDepolarTab = activeTab === 'depolar';
 
-  const handleExecuteSingleProductMFQuery = async (urun: any, warehouseId: string) => {
+  const handleExecuteSingleProductMFQuery = async (urun: any, warehouseId: string, isWidget = false) => {
     if (!urun) return;
     
     const extractSpansLocal = (htmlStr: string): string[] => {
@@ -4548,8 +4678,8 @@ export default function OrderCockpit() {
     const activeDepolar = loadDepolar();
     const currentDepo = activeDepolar.find(d => d.id === warehouseId);
     if (!currentDepo) {
-      alert('Depo bulunamadı.');
-      return;
+      if (!isWidget) alert('Depo bulunamadı.');
+      throw new Error('Depo bulunamadı.');
     }
 
     const barcode = urun.v1;
@@ -4560,7 +4690,7 @@ export default function OrderCockpit() {
     } catch {}
 
     const cacheKey = getCacheKey(warehouseId);
-    const cached = cache[barcode]?.[cacheKey];
+    const cached = cache[barcode] ? (cache[barcode].date ? cache[barcode] : cache[barcode][cacheKey]) : undefined;
     if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
       const mfList = cached.mf_baremleri || [];
       const parsedBarems = mfList.map((raw: string) => {
@@ -4581,10 +4711,10 @@ export default function OrderCockpit() {
           });
           return { ...g, detaylar: updatedDetaylar };
         });
-        setData({ ...data, gruplar: updatedGruplar });
+        setData({ ...data, ...glnRef.current ? {} : {}, gruplar: updatedGruplar });
       }
 
-      alert(`Sorgulama tamamlandı! Baremler (Önbellekten): ${mfList.join(', ') || 'Barem bulunamadı'}`);
+      if (!isWidget) alert(`Sorgulama tamamlandı! Baremler (Önbellekten): ${mfList.join(', ') || 'Barem bulunamadı'}`);
       setMfQueryProduct(null);
       return;
     }
@@ -4618,8 +4748,9 @@ export default function OrderCockpit() {
     }
 
     if (!hiddenWebview) {
-      alert(`${warehouseName} oturumu bulunamadı. Lütfen önce 'Depolar' sekmesinden ${warehouseName}'ya giriş yapın.`);
-      return;
+      const msg = `${warehouseName} oturumu bulunamadı. Lütfen önce 'Depolar' sekmesinden ${warehouseName}'ya giriş yapın.`;
+      if (!isWidget) alert(msg);
+      throw new Error(msg);
     }
 
     setIsSingleMfQuerying(true);
@@ -4865,15 +4996,13 @@ export default function OrderCockpit() {
       try {
         cache = await loadAndMigrateCache(data?.gln || 'local');
       } catch {}
-      const cacheKey = getCacheKey(warehouseId);
-      if (!cache[barcode]) {
-        cache[barcode] = {};
-      }
-      cache[barcode][cacheKey] = {
+      const tvsPsf = detail ? (parsePriceLocal(detail.tavsiyeEdilenSatisFiyati) || psfVal) : psfVal;
+      cache[barcode] = {
         date: todayStr,
         stok: 1,
         fiyat_depocu: dsfVal,
         fiyat_etiket: psfVal,
+        tavsiye_edilen_psf: tvsPsf,
         mf_baremleri: mfList,
         net_fiyatlar: netList,
         kod: ''
@@ -4893,14 +5022,17 @@ export default function OrderCockpit() {
         setData({ ...data, gruplar: updatedGruplar });
       }
 
-      alert(`Sorgulama tamamlandı! Baremler: ${mfList.join(', ') || 'Barem bulunamadı'}`);
+      if (!isWidget) alert(`Sorgulama tamamlandı! Baremler: ${mfList.join(', ') || 'Barem bulunamadı'}`);
     } catch (err: any) {
-      alert('Sorgulama hatası: ' + (err.message || err));
+      if (!isWidget) alert('Sorgulama hatası: ' + (err.message || err));
+      throw err;
     } finally {
       setIsSingleMfQuerying(false);
       setMfQueryProduct(null);
     }
   };
+  // Always keep ref up-to-date so widget IPC trigger can call it even before first manual use
+  widgetQueryRef.current = handleExecuteSingleProductMFQuery;
 
   return (
     <div className={cn("flex min-h-screen bg-stone-50 text-stone-900 font-sans relative", isWails && "wails-compact")}>
@@ -4916,6 +5048,7 @@ export default function OrderCockpit() {
         <Depolar 
           cart={cart} 
           gln={data?.gln || 'local'} 
+          data={data}
           onBack={() => setActiveTab('oneri')} 
           webviewRefs={sharedWebviewRefs}
           pendingSearch={pendingDepoSearch}
@@ -4927,6 +5060,16 @@ export default function OrderCockpit() {
             if (next[barkod]) next[barkod] = { ...next[barkod], inCart: false, qty: 0 };
             return next;
           })}
+          onAddToCart={(barkod: string, item: any) => setCart(prev => {
+            const next = { ...prev };
+            next[barkod] = {
+              ...next[barkod],
+              ...item,
+              inCart: true
+            };
+            return next;
+          })}
+          onOpenProductAnalysis={handleOpenProductAnalysis}
         />
       </div>
 
@@ -5201,6 +5344,15 @@ export default function OrderCockpit() {
                           <span>AI Sipariş Modu</span>
                         </button>
 
+                        {/* Aktif Kampanyalar Butonu */}
+                        <button
+                          onClick={() => setShowActiveCampaignsModal(true)}
+                          className="h-8 px-3 rounded-lg text-[11px] font-black bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow-sm hover:shadow-md hover:from-teal-700 hover:to-emerald-700 transition-all flex items-center gap-1.5 shrink-0 select-none"
+                        >
+                          <Layers size={12} className="text-white fill-white/25" />
+                          <span>Aktif Kampanyalar</span>
+                        </button>
+
                         {/* Acil Sipariş Modu Butonu */}
                         <button
                           onClick={() => setShowUrgentModal(true)}
@@ -5208,6 +5360,23 @@ export default function OrderCockpit() {
                         >
                           <Zap size={12} className="text-white fill-white/25 animate-pulse" />
                           <span>Acil Sipariş Modu</span>
+                        </button>
+
+                        {/* Yüzen Arama (Widget) Butonu */}
+                        <button
+                          onClick={() => {
+                            const electron = typeof window !== 'undefined' && (window as any).require ? (window as any).require('electron') : null;
+                            if (electron) {
+                              electron.ipcRenderer.send('widget:toggle');
+                            } else {
+                              alert('Widget sadece masaüstü uygulamasında çalışır.');
+                            }
+                          }}
+                          className="h-8 px-3 rounded-lg text-[11px] font-black bg-stone-100 hover:bg-stone-200 border border-stone-200 text-stone-700 shadow-sm transition-all flex items-center gap-1.5 shrink-0 select-none"
+                          title="Masaüstünde yüzen arama kutusunu (Widget) açar veya kapatır (Kısayol: Ctrl+Alt+S)"
+                        >
+                          <Search size={12} className="text-stone-500" />
+                          <span>Yüzen Arama (Widget)</span>
                         </button>
 
                         <div className="w-px h-5 bg-stone-200 shrink-0" />
@@ -7066,6 +7235,381 @@ export default function OrderCockpit() {
                   className="h-9 px-5 rounded-xl bg-teal-650 hover:bg-teal-700 text-white font-extrabold text-xs shadow-md disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                 >
                   Sorgula
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* AKTİF KAMPANYALAR MODALI */}
+      <AnimatePresence>
+        {showActiveCampaignsModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-end md:items-center justify-center bg-stone-900/40 backdrop-blur-sm p-0 md:p-6"
+            onClick={() => setShowActiveCampaignsModal(false)}>
+            <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }}
+              onClick={(e: any) => e.stopPropagation()}
+              className="bg-white rounded-t-[2rem] md:rounded-[2rem] shadow-2xl w-full md:max-w-5xl h-[90vh] max-h-[95vh] overflow-hidden flex flex-col">
+              
+              {/* MODAL HEADER */}
+              <div className="px-6 py-5 border-b border-stone-100 flex justify-between items-start shrink-0">
+                <div>
+                  <h3 className="font-black text-stone-900 text-base leading-tight flex items-center gap-2">
+                    <Layers size={18} className="text-teal-600" />
+                    Aktif Kampanya & Barem Analiz Modülü
+                  </h3>
+                  <p className="text-xs text-stone-400 mt-1">
+                    Tüm depolardaki aktif MF kampanyalarını, hedeflenen stok ömrü ve aylık taşıma maliyetine göre otomatik analiz eder.
+                  </p>
+                </div>
+                <button onClick={() => setShowActiveCampaignsModal(false)}
+                  className="h-9 w-9 flex items-center justify-center rounded-xl bg-stone-100 hover:bg-red-50 hover:text-red-600 transition-colors text-stone-500 shrink-0">
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* MODAL BODY */}
+              <div className="px-6 py-4 flex-1 flex flex-col gap-4 min-h-0 overflow-hidden bg-white">
+                {/* KONTROL BANDI */}
+                <div className="bg-gradient-to-r from-teal-50 to-stone-50 border border-teal-100 rounded-2xl px-4 py-3 shrink-0">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* A: Aylık Stok Maliyeti */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Aylık Stok Maliyeti</span>
+                        <span className="text-xs font-black text-teal-700">%{campaignCarryingCost}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="20"
+                        step="0.5"
+                        value={campaignCarryingCost}
+                        onChange={(e) => setCampaignCarryingCost(parseFloat(e.target.value) || 0)}
+                        className="w-full accent-teal-600 h-1.5 bg-teal-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <div className="flex gap-1 mt-1">
+                        {[2, 3, 5, 8, 10].map(c => (
+                          <button key={c} onClick={() => setCampaignCarryingCost(c)} className={cn("px-1 py-0.5 text-[9px] font-extrabold rounded border transition-colors", campaignCarryingCost === c ? "bg-teal-600 border-teal-600 text-white" : "bg-white border-stone-200 text-stone-400 hover:border-teal-300 hover:text-teal-600")}>%{c}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* B: Maksimum Stok Ömrü */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Maksimum Stok Ömrü</span>
+                        <span className="text-xs font-black text-teal-700">{campaignMaxDays >= 9999 ? '∞ Sınırsız' : `${campaignMaxDays} Gün`}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="10"
+                        max="180"
+                        step="5"
+                        value={Math.min(campaignMaxDays, 180)}
+                        onChange={(e) => setCampaignMaxDays(parseInt(e.target.value) || 30)}
+                        disabled={campaignMaxDays >= 9999}
+                        className="w-full accent-teal-600 h-1.5 bg-teal-200 rounded-lg appearance-none cursor-pointer disabled:opacity-40"
+                      />
+                      <div className="flex gap-1 mt-1">
+                        {[30, 45, 60, 90, 120, 180].map(d => (
+                          <button key={d} onClick={() => setCampaignMaxDays(d)} className={cn("px-1 py-0.5 text-[9px] font-extrabold rounded border transition-colors", campaignMaxDays === d ? "bg-teal-600 border-teal-600 text-white" : "bg-white border-stone-200 text-stone-400 hover:border-teal-300 hover:text-teal-600")}>{d}G</button>
+                        ))}
+                        <button onClick={() => setCampaignMaxDays(9999)} className={cn("px-1 py-0.5 text-[9px] font-extrabold rounded border transition-colors", campaignMaxDays >= 9999 ? "bg-amber-500 border-amber-600 text-white" : "bg-white border-stone-200 text-stone-400 hover:border-amber-400 hover:text-amber-650")}>∞</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Arama Kutusu & Yeniden Hesapla */}
+                  <div className="flex gap-2 mt-3">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={14} />
+                      <input
+                        type="text"
+                        value={campaignSearchQuery}
+                        onChange={(e) => setCampaignSearchQuery(e.target.value)}
+                        placeholder="İlaç adı veya barkod ile tüm kampanyalarda ara..."
+                        className="w-full pl-9 pr-8 py-2 border border-stone-200 rounded-xl text-xs outline-none focus:border-teal-500 transition-all bg-white"
+                      />
+                      {campaignSearchQuery && (
+                        <button onClick={() => setCampaignSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setLoadingCampaignCache(true);
+                        setTimeout(() => setLoadingCampaignCache(false), 300);
+                      }}
+                      className="px-4 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl shadow-sm hover:shadow active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                      title="Verileri ve analizi yeniden hesapla"
+                    >
+                      <RefreshCw size={12} className={cn(loadingCampaignCache && "animate-spin")} />
+                      <span>Yeniden Hesapla</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* KAMPANYA LİSTESİ Wrapper */}
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border border-stone-150 rounded-2xl bg-white shadow-sm">
+                  {loadingCampaignCache ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-2 text-stone-500">
+                      <span className="h-6 w-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin"></span>
+                      <span className="text-xs font-bold">Kampanya verileri yükleniyor, lütfen bekleyin...</span>
+                    </div>
+                  ) : (() => {
+                    const searchLower = campaignSearchQuery.toLowerCase();
+                    
+                    // Filter and map campaigns
+                    const campaigns = Object.entries(campaignCache)
+                      .map(([barcode, entry]: any) => {
+                        if (!entry || !entry.mf_baremleri || entry.mf_baremleri.length === 0) return null;
+
+                        // Get product details
+                        const prod = productDetailsMap[barcode];
+                        if (!prod) return null; // We need velocity/stock details to run simulation
+
+                        // Check search filter
+                        if (searchLower && !prod.ad.toLowerCase().includes(searchLower) && !barcode.includes(searchLower)) {
+                          return null;
+                        }
+
+                        // Parse barems
+                        const parsedBarems = entry.mf_baremleri.map((raw: string) => {
+                          const parts = raw.split('+');
+                          const ana = parseInt(parts[0]) || 0;
+                          const bedava = parseInt(parts[1]) || 0;
+                          return { raw, ana, bedava };
+                        }).filter((b: any) => b.ana > 0 && b.bedava > 0);
+
+                        if (parsedBarems.length === 0) return null;
+
+                        // Run feasibility analysis for each barem
+                        const analyzedBarems = parsedBarems.map((b: any) => {
+                          const totalQty = b.ana + b.bedava;
+                          const groupDailySpeed = (prod.groupHiz / 30) || 0.001;
+                          const totalDays = (prod.groupStok + totalQty) / groupDailySpeed;
+                          const deltaDays = totalQty / groupDailySpeed;
+                          const deltaMonths = deltaDays / 30;
+                          const carryingCostPct = deltaMonths * (campaignCarryingCost / 100);
+                          const gainPct = b.bedava / (b.ana + b.bedava);
+                          const netReturn = gainPct - carryingCostPct;
+
+                          const isOverDays = totalDays > campaignMaxDays;
+                          const isNotProfitable = netReturn <= 0;
+
+                          let status = 'profitable';
+                          let reason = `Net Getiri: +%${(netReturn * 100).toFixed(1)}`;
+                          
+                          if (isOverDays && isNotProfitable) {
+                            status = 'rejected_both';
+                            reason = `Zararlı (-%${(Math.abs(netReturn) * 100).toFixed(1)}) & Süre Aşıldı (${Math.round(totalDays)}G)`;
+                          } else if (isOverDays) {
+                            status = 'rejected_max_days';
+                            reason = `Süre Aşıldı: ${Math.round(totalDays)}G`;
+                          } else if (isNotProfitable) {
+                            status = 'rejected_carrying_cost';
+                            reason = `Zararlı: -%${(Math.abs(netReturn) * 100).toFixed(1)}`;
+                          }
+
+                          return {
+                            ...b,
+                            totalDays,
+                            gainPct,
+                            carryingCostPct,
+                            netReturn,
+                            status,
+                            reason
+                          };
+                        });
+
+                        // Sort barems: profitable ones first (by net return desc)
+                        analyzedBarems.sort((a: any, b: any) => {
+                          if (a.status === 'profitable' && b.status !== 'profitable') return -1;
+                          if (a.status !== 'profitable' && b.status === 'profitable') return 1;
+                          return b.netReturn - a.netReturn;
+                        });
+
+                        // Find maximum net return among all barems
+                        let maxNetReturn = -999999;
+                        analyzedBarems.forEach((b: any) => {
+                          if (b.netReturn > maxNetReturn) {
+                            maxNetReturn = b.netReturn;
+                          }
+                        });
+
+                        return {
+                          barcode,
+                          ad: prod.ad,
+                          hiz: prod.hiz,
+                          stok: prod.stok,
+                          groupStok: prod.groupStok,
+                          groupHiz: prod.groupHiz,
+                          rawUrun: prod.rawUrun,
+                          baremler: analyzedBarems,
+                          maxNetReturn,
+                          grupId: prod.grupId
+                        };
+                      })
+                      .filter(Boolean) as any[];
+
+                    // Group campaigns by grupId so products in the same group are shown right under each other
+                    const groupMap: Record<string, { maxNetReturn: number, items: any[] }> = {};
+                    campaigns.forEach((c: any) => {
+                      const grpId = c.grupId || c.barcode;
+                      if (!groupMap[grpId]) {
+                        groupMap[grpId] = { maxNetReturn: -999999, items: [] };
+                      }
+                      groupMap[grpId].items.push(c);
+                      if (c.maxNetReturn > groupMap[grpId].maxNetReturn) {
+                        groupMap[grpId].maxNetReturn = c.maxNetReturn;
+                      }
+                    });
+
+                    // Sort each group's items by maxNetReturn descending
+                    Object.values(groupMap).forEach((g: any) => {
+                      g.items.sort((a: any, b: any) => b.maxNetReturn - a.maxNetReturn);
+                    });
+
+                    // Sort the groups themselves by their maxNetReturn descending
+                    const sortedGroups = Object.values(groupMap).sort((a: any, b: any) => b.maxNetReturn - a.maxNetReturn);
+
+                    // Flatten back to campaigns list
+                    const sortedCampaigns = sortedGroups.flatMap((g: any) => g.items);
+
+                    if (sortedCampaigns.length === 0) {
+                      return (
+                        <div className="flex flex-col items-center justify-center py-20 text-center text-stone-400">
+                          <PackageX size={36} className="text-stone-300 mb-2" />
+                          <p className="text-xs font-bold">Kriterlere uygun aktif kampanya bulunamadı.</p>
+                          <p className="text-[10px] text-stone-400 mt-0.5">Arama kelimesini değiştirebilir veya başka bir depoya ait verileri kontrol edebilirsiniz.</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-stone-50 border-b border-stone-150 text-[10px] font-black text-stone-500 uppercase tracking-wider select-none sticky top-0 z-10">
+                            <th className="px-4 py-2.5 bg-stone-50">Ürün Adı & Barkod</th>
+                            <th className="px-3 py-2.5 text-center bg-stone-50">Hız (Aylık / Grup)</th>
+                            <th className="px-3 py-2.5 text-center bg-stone-50">Stok (Bireysel / Grup)</th>
+                            <th className="px-4 py-2.5 bg-stone-50">Barem Analizleri & Sipariş</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-100">
+                          {sortedCampaigns.map((c: any) => (
+                            <tr key={c.barcode} className="hover:bg-stone-50/30 transition-colors text-xs">
+                              {/* Ürün Bilgisi */}
+                              <td className="px-4 py-3 min-w-[200px] align-top font-bold">
+                                <button
+                                  onClick={() => handleOpenProductAnalysis(c.barcode, c.ad)}
+                                  className="text-left font-semibold text-stone-850 hover:text-teal-650 transition-colors text-[12px] block hover:underline font-bold"
+                                  title="İlaç detay analizini aç"
+                                >
+                                  {c.ad}
+                                </button>
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <span className="text-[10px] text-stone-400 font-mono select-all">{c.barcode}</span>
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      if (navigator.clipboard && window.isSecureContext) {
+                                        await navigator.clipboard.writeText(c.barcode);
+                                        setCopiedCampaignBarkod(c.barcode);
+                                        setTimeout(() => setCopiedCampaignBarkod(null), 1500);
+                                      }
+                                    }}
+                                    className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors shrink-0"
+                                    title={`Barkodu Kopyala: ${c.barcode}`}
+                                  >
+                                    {copiedCampaignBarkod === c.barcode ? (
+                                      <Check size={10} className="text-emerald-655 font-black animate-ping-once" />
+                                    ) : (
+                                      <Copy size={10} className="text-emerald-600" />
+                                    )}
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* Hız */}
+                              <td className="px-3 py-3 text-center whitespace-nowrap align-top">
+                                <div className="font-bold text-stone-800">Hız: {c.hiz.toFixed(1)}</div>
+                                <div className="text-[9px] text-stone-400 font-medium mt-0.5">G.Hız: {c.groupHiz.toFixed(1)}</div>
+                              </td>
+
+                              {/* Stok */}
+                              <td className="px-3 py-3 text-center whitespace-nowrap align-top">
+                                <div className="font-bold text-stone-800">Stok: {c.stok}</div>
+                                <div className="text-[9px] text-stone-400 font-medium mt-0.5">G.Stok: {c.groupStok}</div>
+                              </td>
+
+                              {/* Baremler */}
+                              <td className="px-4 py-3">
+                                <div className="flex flex-col gap-1.5">
+                                  {c.baremler.map((b: any, bIdx: number) => {
+                                    const isProfitable = b.status === 'profitable';
+                                    const isOverDays = b.status === 'rejected_max_days';
+                                    const isBoth = b.status === 'rejected_both';
+
+                                    let badgeBg = "bg-red-50 text-red-700 border-red-200";
+                                    if (isProfitable) badgeBg = "bg-emerald-50 text-emerald-700 border-emerald-250";
+                                    else if (isOverDays) badgeBg = "bg-amber-50 text-amber-700 border-amber-250";
+                                    else if (isBoth) badgeBg = "bg-rose-100 text-rose-705 border-rose-300 font-extrabold";
+
+                                    return (
+                                      <div key={bIdx} className="flex items-center justify-between gap-3 border border-stone-100 rounded-lg p-1.5 hover:bg-stone-50/50 transition-all bg-stone-50/20">
+                                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                          <span className="font-black text-stone-800 bg-stone-100 border border-stone-200 px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0">
+                                            {b.raw}
+                                          </span>
+                                          <span className={cn("px-1.5 py-0.5 rounded border text-[9px] font-bold shrink-0", badgeBg)}>
+                                            {b.reason}
+                                          </span>
+                                          <div className="text-[9px] text-stone-400 font-medium">
+                                            <span>Ömür: <strong>{Math.round(b.totalDays)} Gün</strong></span>
+                                            <span className="mx-1.5">|</span>
+                                            <span>Maliyet: <strong>%{(b.carryingCostPct * 100).toFixed(1)}</strong></span>
+                                            <span className="mx-1.5">|</span>
+                                            <span>MF Getirisi: <strong>%{(b.gainPct * 100).toFixed(1)}</strong></span>
+                                          </div>
+                                        </div>
+
+                                        <button
+                                          onClick={() => {
+                                            updateCart(c.barcode, b.ana, b.bedava, c.rawUrun, true);
+                                            alert(`${c.ad} ürünü için ${c.rawUrun.v91 || 'varsayılan depo'} üzerinden ${b.raw} baremi sepete eklendi.`);
+                                          }}
+                                          className={cn(
+                                            "h-7 px-3 rounded-lg font-bold text-[10px] transition-all cursor-pointer shadow-sm active:scale-95 shrink-0",
+                                            isProfitable 
+                                              ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
+                                              : "bg-stone-100 hover:bg-stone-200 text-stone-600 border border-stone-200"
+                                          )}
+                                        >
+                                          Sipariş Et
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* MODAL FOOTER */}
+              <div className="px-6 py-4 border-t border-stone-100 bg-stone-50 flex justify-end shrink-0">
+                <button onClick={() => setShowActiveCampaignsModal(false)}
+                  className="h-10 px-5 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-extrabold text-xs transition-colors cursor-pointer shadow-sm">
+                  Kapat
                 </button>
               </div>
             </motion.div>

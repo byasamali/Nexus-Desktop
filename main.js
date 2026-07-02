@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, protocol, net, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -62,7 +62,16 @@ function registerAppProtocol() {
 
     try {
       const fileUrl = pathToFileURL(filePath).toString();
-      return net.fetch(fileUrl);
+      const response = await net.fetch(fileUrl);
+      const headers = new Headers(response.headers);
+      headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      headers.set('Pragma', 'no-cache');
+      headers.set('Expires', '0');
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+      });
     } catch (err) {
       console.error(`Failed to serve: ${pathname}`, err);
       return new Response('Not Found', { status: 404 });
@@ -87,6 +96,13 @@ function createWindow() {
 
   mainWindow.loadURL('app://./index.html');
 
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      mainWindow.webContents.openDevTools();
+      event.preventDefault();
+    }
+  });
+
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
     console.log(`[Renderer Console] ${message} (from ${path.basename(sourceId)}:${line})`);
   });
@@ -103,6 +119,100 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+let widgetWindow;
+
+function createWidgetWindow() {
+  if (widgetWindow) return;
+
+  widgetWindow = new BrowserWindow({
+    width: 480,
+    height: 480,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    show: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: false,
+      nodeIntegration: true,
+      nodeIntegrationInSubFrames: true
+    }
+  });
+
+  widgetWindow.webContents.session.clearCache().then(() => {
+    widgetWindow.loadURL('app://./widget.html');
+  });
+
+  widgetWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      widgetWindow.webContents.openDevTools({ mode: 'detach' });
+      event.preventDefault();
+    }
+  });
+
+  widgetWindow.on('closed', () => {
+    widgetWindow = null;
+  });
+}
+
+// widget:resize is now a no-op — window size is fixed at 480px.
+// The React component controls visible height via CSS. We use setIgnoreMouseEvents
+// to make the transparent / invisible parts of the window click-through.
+ipcMain.handle('widget:resize', async (event, height) => {
+  // no-op kept for API compatibility
+});
+
+ipcMain.handle('widget:set-mouse', async (event, ignore) => {
+  if (widgetWindow) {
+    if (ignore) {
+      widgetWindow.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      widgetWindow.setIgnoreMouseEvents(false);
+    }
+  }
+});
+
+ipcMain.handle('widget:hide', async () => {
+  if (widgetWindow) {
+    widgetWindow.hide();
+  }
+});
+
+ipcMain.handle('widget:dev-tools', async () => {
+  if (widgetWindow) {
+    widgetWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+});
+
+ipcMain.on('widget:toggle', () => {
+  if (!widgetWindow) {
+    createWidgetWindow();
+  }
+  if (widgetWindow) {
+    if (widgetWindow.isVisible()) {
+      widgetWindow.hide();
+    } else {
+      widgetWindow.show();
+      widgetWindow.focus();
+    }
+  }
+});
+
+ipcMain.on('widget:trigger-query', (event, data) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('widget:trigger-query', data);
+  }
+});
+
+ipcMain.on('widget:query-finished', (event, data) => {
+  if (widgetWindow) {
+    widgetWindow.webContents.send('widget:query-finished', data);
+  }
+});
 
 // IPC Handlers matching Go App bindings
 ipcMain.handle('wails:LoadSettings', async () => {
@@ -189,14 +299,14 @@ ipcMain.handle('wails:SaveLocalBase64File', async (event, gln, filename, base64D
   }
 });
 
-ipcMain.handle('wails:ParseSelcukCampaigns', async (event, gln) => {
+ipcMain.handle('wails:ParseSelcukCampaigns', async (event, gln, depo = 'SELCUK') => {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(pythonDir, 'parse_selcuk_campaigns.py');
     let pythonProcess;
     if (fs.existsSync(pythonVenvPython)) {
-      pythonProcess = spawn(pythonVenvPython, [scriptPath, '--gln', gln]);
+      pythonProcess = spawn(pythonVenvPython, [scriptPath, '--gln', gln, '--depo', depo]);
     } else {
-      pythonProcess = spawn('python', [scriptPath, '--gln', gln]);
+      pythonProcess = spawn('python', [scriptPath, '--gln', gln, '--depo', depo]);
     }
 
     let stdoutData = '';
@@ -430,6 +540,21 @@ ipcMain.handle('wails:RunDbQuery', async (event, query, paramsJSON) => {
 app.whenReady().then(() => {
   registerAppProtocol();
   createWindow();
+  createWidgetWindow();
+
+  globalShortcut.register('Ctrl+Alt+S', () => {
+    if (!widgetWindow) {
+      createWidgetWindow();
+    }
+    if (widgetWindow) {
+      if (widgetWindow.isVisible()) {
+        widgetWindow.hide();
+      } else {
+        widgetWindow.show();
+        widgetWindow.focus();
+      }
+    }
+  });
 
   // ── GEK Network Interceptor (debug) ─────────────────────────────────────
   // Capture ALL requests/responses to GEK's MainService API for diagnosis
@@ -493,4 +618,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });

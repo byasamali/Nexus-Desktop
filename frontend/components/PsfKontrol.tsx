@@ -15,17 +15,42 @@ function getCacheKey(depoId: string): string {
 
 async function loadAndMigrateCache(gln: string): Promise<any> {
   const tenantGln = gln || 'local';
+  
+  // 1. First try reading query_cache.json
   try {
     const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
     if (rawCombined && rawCombined !== '{}') {
       const parsed = JSON.parse(rawCombined);
       const firstKey = Object.keys(parsed)[0];
-      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
-        return parsed;
+      if (firstKey && parsed[firstKey]) {
+        const val = parsed[firstKey];
+        // If it's already flat, return it directly
+        if (val.hasOwnProperty('date') || val.hasOwnProperty('mf_baremleri') || val.hasOwnProperty('fiyat_depocu')) {
+          return parsed;
+        }
+        
+        // If it's nested (e.g. { barcode: { SELCUK: { ... } } }), flatten it!
+        const flattened: any = {};
+        for (const [barcode, entry] of Object.entries(parsed)) {
+          if (entry && typeof entry === 'object') {
+            const nestedKeys = Object.keys(entry).filter(k => (entry as any)[k] && typeof (entry as any)[k] === 'object' && !Array.isArray((entry as any)[k]));
+            if (nestedKeys.length > 0) {
+              flattened[barcode] = (entry as any)[nestedKeys[0]];
+            } else {
+              flattened[barcode] = entry;
+            }
+          }
+        }
+        // Save the flattened version back
+        try {
+          await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(flattened, null, 2));
+        } catch (err) {}
+        return flattened;
       }
     }
   } catch (err) {}
 
+  // 2. If query_cache.json doesn't exist, migrate from old files in FLAT format
   const combined: any = {};
   const oldFiles = [
     { file: 'selcuk_query_cache.json', key: 'SELCUK' },
@@ -42,12 +67,13 @@ async function loadAndMigrateCache(gln: string): Promise<any> {
       if (raw && raw !== '{}') {
         const data = JSON.parse(raw);
         for (const [barcode, entry] of Object.entries(data)) {
-          if (!combined[barcode]) combined[barcode] = {};
           if (entry && typeof entry === 'object') {
-            combined[barcode][item.key] = {
-              ...(entry as any),
-              depo: (entry as any).depo || item.key
-            };
+            // Keep the first one that has data
+            if (!combined[barcode]) {
+              combined[barcode] = {
+                ...(entry as any)
+              };
+            }
           }
         }
       }
@@ -180,17 +206,28 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                         Object.keys(globalCache).forEach(barcode => {
                             const entryObj = globalCache[barcode];
                             if (entryObj && typeof entryObj === 'object') {
-                                Object.keys(entryObj).forEach(depoKey => {
-                                    const info = entryObj[depoKey];
-                                    if (info) {
-                                        mergedCache[barcode] = {
-                                            fiyat_etiket: info.fiyat_etiket || 0,
-                                            fiyat_depocu: info.fiyat_depocu || 0,
-                                            date: info.date || '',
-                                            depo: info.depo || depoKey
-                                        };
-                                    }
-                                });
+                                if (entryObj.hasOwnProperty('date') || entryObj.hasOwnProperty('mf_baremleri') || entryObj.hasOwnProperty('fiyat_depocu')) {
+                                    mergedCache[barcode] = {
+                                        fiyat_etiket: entryObj.fiyat_etiket || 0,
+                                        fiyat_depocu: entryObj.fiyat_depocu || 0,
+                                        tavsiye_edilen_psf: entryObj.tavsiye_edilen_psf || 0,
+                                        date: entryObj.date || '',
+                                        depo: entryObj.depo || ''
+                                    };
+                                } else {
+                                    Object.keys(entryObj).forEach(depoKey => {
+                                        const info = entryObj[depoKey];
+                                        if (info && typeof info === 'object') {
+                                            mergedCache[barcode] = {
+                                                fiyat_etiket: info.fiyat_etiket || 0,
+                                                fiyat_depocu: info.fiyat_depocu || 0,
+                                                tavsiye_edilen_psf: info.tavsiye_edilen_psf || 0,
+                                                date: info.date || '',
+                                                depo: info.depo || depoKey
+                                            };
+                                        }
+                                    });
+                                }
                             }
                         });
                     } catch (err) {
@@ -730,19 +767,16 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const dsfVal = tmpDsf;
                     const psfVal = tmpPsf;
 
-                    const cacheKey = getCacheKey(queryWarehouse);
-                    if (!cache[barcode]) {
-                        cache[barcode] = {};
-                    }
-                    cache[barcode][cacheKey] = {
+                    const tvsPsf = parseFloat(kart.ZTVS_FIYATI || kart.TVS_FIYATI || detailData?.ZTVS_FIYATI || detailData?.TVS_FIYATI || 0) || psfVal;
+                    cache[barcode] = {
                         date: todayStr,
                         stok: stokVal,
                         fiyat_depocu: dsfVal,
                         fiyat_etiket: psfVal,
+                        tavsiye_edilen_psf: tvsPsf,
                         mf_baremleri: mfList,
                         net_fiyatlar: netList,
-                        kod: queryResult.matnr || '',
-                        depo: 'GEK'
+                        kod: queryResult.matnr || ''
                     };
 
                     if ((window as any).go?.main?.App?.SaveLocalJSON) {
@@ -913,19 +947,15 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const mfList: string[] = [];
                     const netList: string[] = [];
 
-                    const cacheKey = getCacheKey(queryWarehouse);
-                    if (!cache[barcode]) {
-                        cache[barcode] = {};
-                    }
-                    cache[barcode][cacheKey] = {
+                    cache[barcode] = {
                         date: todayStr,
                         stok: stokVal,
                         fiyat_depocu: dsfVal,
                         fiyat_etiket: psfVal,
+                        tavsiye_edilen_psf: psfVal,
                         mf_baremleri: mfList,
                         net_fiyatlar: netList,
-                        kod: queryResult.kod || '',
-                        depo: 'Alliance'
+                        kod: queryResult.kod || ''
                     };
 
                     if ((window as any).go?.main?.App?.SaveLocalJSON) {
@@ -1087,19 +1117,16 @@ export default function PsfKontrolPage({ data, gln, webviewRefs, onOpenProductAn
                     const dsfVal = parsePrice(detail.depocuFiyati);
                     const psfVal = parsePrice(detail.tavsiyeEdilenSatisFiyati || detail.SonFiyat || detail.etiketFiyati);
 
-                    const cacheKey = getCacheKey(queryWarehouse);
-                    if (!cache[barcode]) {
-                        cache[barcode] = {};
-                    }
-                    cache[barcode][cacheKey] = {
+                    const tvsPsf = parsePrice(detail.tavsiyeEdilenSatisFiyati) || psfVal;
+                    cache[barcode] = {
                         date: todayStr,
                         stok: typeof detail.stokDurumu === 'number' ? detail.stokDurumu : parseInt(detail.stokDurumu || 0),
                         fiyat_depocu: dsfVal,
                         fiyat_etiket: psfVal,
+                        tavsiye_edilen_psf: tvsPsf,
                         mf_baremleri: mfList,
                         net_fiyatlar: netList,
-                        kod: detail.kod || '',
-                        depo: 'AS ECZA'
+                        kod: detail.kod || ''
                     };
 
                     if ((window as any).go?.main?.App?.SaveLocalJSON) {

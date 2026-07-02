@@ -24,17 +24,42 @@ function getCacheKey(depoId: string): string {
 
 async function loadAndMigrateCache(gln: string): Promise<any> {
   const tenantGln = gln || 'local';
+  
+  // 1. First try reading query_cache.json
   try {
     const rawCombined = await (window as any).go?.main?.App?.LoadLocalJSON(tenantGln, 'query_cache.json');
     if (rawCombined && rawCombined !== '{}') {
       const parsed = JSON.parse(rawCombined);
       const firstKey = Object.keys(parsed)[0];
-      if (firstKey && parsed[firstKey] && !parsed[firstKey].hasOwnProperty('date')) {
-        return parsed;
+      if (firstKey && parsed[firstKey]) {
+        const val = parsed[firstKey];
+        // If it's already flat, return it directly
+        if (val.hasOwnProperty('date') || val.hasOwnProperty('mf_baremleri') || val.hasOwnProperty('fiyat_depocu')) {
+          return parsed;
+        }
+        
+        // If it's nested (e.g. { barcode: { SELCUK: { ... } } }), flatten it!
+        const flattened: any = {};
+        for (const [barcode, entry] of Object.entries(parsed)) {
+          if (entry && typeof entry === 'object') {
+            const nestedKeys = Object.keys(entry).filter(k => (entry as any)[k] && typeof (entry as any)[k] === 'object' && !Array.isArray((entry as any)[k]));
+            if (nestedKeys.length > 0) {
+              flattened[barcode] = (entry as any)[nestedKeys[0]];
+            } else {
+              flattened[barcode] = entry;
+            }
+          }
+        }
+        // Save the flattened version back
+        try {
+          await (window as any).go?.main?.App?.SaveLocalJSON(tenantGln, 'query_cache.json', JSON.stringify(flattened, null, 2));
+        } catch (err) {}
+        return flattened;
       }
     }
   } catch (err) {}
 
+  // 2. If query_cache.json doesn't exist, migrate from old files in FLAT format
   const combined: any = {};
   const oldFiles = [
     { file: 'selcuk_query_cache.json', key: 'SELCUK' },
@@ -51,12 +76,13 @@ async function loadAndMigrateCache(gln: string): Promise<any> {
       if (raw && raw !== '{}') {
         const data = JSON.parse(raw);
         for (const [barcode, entry] of Object.entries(data)) {
-          if (!combined[barcode]) combined[barcode] = {};
           if (entry && typeof entry === 'object') {
-            combined[barcode][item.key] = {
-              ...(entry as any),
-              depo: (entry as any).depo || item.key
-            };
+            // Keep the first one that has data
+            if (!combined[barcode]) {
+              combined[barcode] = {
+                ...(entry as any)
+              };
+            }
           }
         }
       }
@@ -80,6 +106,9 @@ type CartItem = {
     v95?: string;
     mf_baremleri?: any[];
     stock?: number;
+    v20?: number;
+    groupTotalStock?: number;
+    groupTotalSpeed?: number;
 };
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -187,6 +216,21 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [queryProgress, setQueryProgress] = useState<{ current: number; total: number; msg: string } | null>(null);
+    const [queryCache, setQueryCache] = useState<Record<string, any>>({});
+
+    useEffect(() => {
+        const loadCache = async () => {
+            try {
+                const c = await loadAndMigrateCache(gln || 'local');
+                if (c) {
+                    setQueryCache(c);
+                }
+            } catch (err) {
+                console.error('Failed to load query cache in SepetPage:', err);
+            }
+        };
+        loadCache();
+    }, [gln]);
 
     const handleQueryMFForSelected = async () => {
         const barcodesArray = Array.from(selectedItems);
@@ -200,6 +244,61 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
         
         const activeDepots = loadDepolar().filter(d => d.enabled !== false);
         const updatedItems = [...items];
+
+        const cleanHtmlText = (html: string): string => {
+            if (!html) return '';
+            const matches = html.match(/<span>(.*?)<\/span>/g);
+            if (matches) {
+                return matches.map(m => m.replace(/<\/?span>/g, '').trim()).filter(Boolean).join(', ');
+            }
+            return html.replace(/<[^>]*>/g, '').trim();
+        };
+
+        let cache: any = {};
+        const todayStr = new Date().toLocaleDateString('en-CA');
+        try {
+            cache = await loadAndMigrateCache(gln || 'local');
+        } catch {}
+
+        let cachedCount = 0;
+        let uncachedCount = 0;
+        let invalidDepotCount = 0;
+
+        for (const barcode of barcodesArray) {
+            const item = updatedItems.find(i => i.barkod === barcode);
+            if (!item) continue;
+            
+            const depoName = item.depo;
+            if (!depoName || depoName === 'Depo Belirsiz' || depoName === 'Seçiniz...') {
+                invalidDepotCount++;
+                continue;
+            }
+            
+            const currentDepo = activeDepots.find(d => d.ad === depoName || d.id === depoName);
+            if (!currentDepo) {
+                invalidDepotCount++;
+                continue;
+            }
+
+            const cacheKey = getCacheKey(currentDepo.id);
+            const cached = cache[barcode] ? (cache[barcode].date ? cache[barcode] : cache[barcode][cacheKey]) : undefined;
+            if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
+                cachedCount++;
+            } else {
+                uncachedCount++;
+            }
+        }
+
+        const confirmMsg = `Sorgulama Öncesi Bilgi:\n\n` +
+                           `• Toplam Seçilen Ürün: ${barcodesArray.length}\n` +
+                           `• Önbellekte Mevcut (Sorgulanmayacak): ${cachedCount}\n` +
+                           `• Depodan Canlı Sorgulanacak: ${uncachedCount}\n` +
+                           (invalidDepotCount > 0 ? `• Deposu Belirsiz/Geçersiz (Atlanacak): ${invalidDepotCount}\n` : '') +
+                           `\nSorgulamayı başlatmak istiyor musunuz?`;
+
+        if (!window.confirm(confirmMsg)) {
+            return;
+        }
         
         for (let idx = 0; idx < barcodesArray.length; idx++) {
             const barcode = barcodesArray[idx];
@@ -218,16 +317,8 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                 continue;
             }
 
-            let cache: any = {};
-            let todayStr = '';
-
-            todayStr = new Date().toLocaleDateString('en-CA');
-            try {
-                cache = await loadAndMigrateCache(gln || 'local');
-            } catch {}
-
             const cacheKey = getCacheKey(currentDepo.id);
-            const cached = cache[barcode]?.[cacheKey];
+            const cached = cache[barcode] ? (cache[barcode].date ? cache[barcode] : cache[barcode][cacheKey]) : undefined;
             if (cached && cached.date >= todayStr && (!cached.start_date || cached.start_date <= todayStr)) {
                 const mfList = cached.mf_baremleri || [];
                 const parsedBarems = mfList.map((raw: string) => {
@@ -341,19 +432,26 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                 } catch {
                                   t = rawText.trim();
                                 }
-                                if (t && t.length > 10) { token = t; }
+                                if (t && t.length > 10) {
+                                  token = t;
+                                }
                               }
                             } catch {}
                           }
                           if (!token) return { error: 'login_required' };
                           
                           window.__gekToken = token;
-
-                          const resp = await fetch("https://esube.gek.org.tr/FrameWorkT1/api/GekOnline/UrunArama", {
-                            method: "POST",
-                            headers: { "content-type": "application/json", "Authorization": "Bearer " + token },
-                            body: JSON.stringify({ SearchText: ${barcodeJson}, Gln: ${JSON.stringify(gln)} })
-                          });
+                          const h = { 'accept': 'application/json;charset=UTF-8', 'TOKEN': token, 'sln': '1' };
+                          
+                          const udUrl = '/MainService/api/rfc/ud';
+                          const gsUrl = '/MainService/api/rfc/gs';
+                          await fetch(udUrl, { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                          await fetch(gsUrl, { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                          
+                          await fetch('/MainService/api/rfc/mat/ss?ST=' + encodeURIComponent(${barcodeJson}), { method: 'GET', headers: h, credentials: 'include' }).catch(() => {});
+                          
+                          const sUrl = '/MainService/api/rfc/mat/sm?ST=' + encodeURIComponent(${barcodeJson}) + '&TYP=3';
+                          const resp = await fetch(sUrl, { method: 'GET', headers: h, credentials: 'include' });
                           if (!resp.ok) return { error: 'http_' + resp.status };
                           const resData = await resp.json();
                           if (resData.hataId !== 0) return { error: resData.hataStr || 'gek_err' };
@@ -491,10 +589,12 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                       const kampanyalar = Array.isArray(detail?.grdKampanyalar) ? detail.grdKampanyalar : [];
                       const bArray: string[] = [];
                       const nArray: string[] = [];
-                      kampanyalar.forEach((kamp: any) => {
-                        if (kamp?.mf && String(kamp.mf).trim().length > 0) {
-                          bArray.push(kamp.mf);
-                          nArray.push(kamp.netFiyat || '');
+                      kampanyalar.forEach((camp: any) => {
+                        const cleanedMf = cleanHtmlText(camp?.mf || '');
+                        const cleanedNet = cleanHtmlText(camp?.netFiyat || '');
+                        if (cleanedMf && cleanedMf.length > 0) {
+                          bArray.push(cleanedMf);
+                          nArray.push(cleanedNet || '');
                         }
                       });
                       mfList = bArray;
@@ -518,31 +618,27 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                     };
                 }
 
-                const cacheKey = getCacheKey(currentDepo.id);
-                if (!cache[barcode]) {
-                    cache[barcode] = {};
-                }
-                cache[barcode][cacheKey] = {
+                const tvsPsf = detail ? (parsePrice(detail.tavsiyeEdilenSatisFiyati) || 0) : 0;
+                cache[barcode] = {
                     date: todayStr,
                     stok: 1,
-                    fiyat_depocu: 0,
                     fiyat_etiket: 0,
+                    tavsiye_edilen_psf: tvsPsf,
                     mf_baremleri: mfList,
                     net_fiyatlar: netList || [],
-                    kod: '',
-                    depo: currentDepo.ad || currentDepo.id
+                    kod: ''
                 };
-                try {
-                    await (window as any).go.main.App.SaveLocalJSON(gln || 'local', 'query_cache.json', JSON.stringify(cache, null, 2));
-                } catch (e) {
-                    console.error('Önbellek kaydetme hatası:', e);
-                }
-
                 successCount++;
             } catch (err) {
                 console.error(`Sorgulama hatası: ${item.ad}`, err);
                 failCount++;
             }
+        }
+        try {
+            await (window as any).go.main.App.SaveLocalJSON(gln || 'local', 'query_cache.json', JSON.stringify(cache, null, 2));
+            setQueryCache({ ...cache });
+        } catch (e) {
+            console.error('Önbellek kaydetme hatası:', e);
         }
         
         persistItems(updatedItems);
@@ -554,8 +650,14 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
         const map: Record<string, any> = {};
         if (data?.gruplar) {
             data.gruplar.forEach((g: any) => {
+                const groupTotalStock = (g.detaylar || []).reduce((sum: number, u: any) => sum + (Number(u.v4) || 0), 0);
+                const groupTotalSpeed = (g.detaylar || []).reduce((sum: number, u: any) => sum + (Number(u.v20) || 0), 0) * 30;
                 (g.detaylar || []).forEach((u: any) => {
-                    map[u.v1] = u;
+                    map[u.v1] = {
+                        ...u,
+                        groupTotalStock,
+                        groupTotalSpeed
+                    };
                 });
             });
         }
@@ -572,6 +674,21 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
         .filter(([_, val]: any) => val.inCart && val.qty > 0)
         .map(([id, val]: any) => {
             const extra = productMap[id] || {};
+            const stockVal = typeof extra.v4 === 'number' ? extra.v4 : parseInt(extra.v4 || 0);
+
+            // Get barems from state queryCache
+            const cachedEntry = queryCache[id];
+            let parsedBarems = val.mf_baremleri || extra.mf_baremleri || [];
+            if (cachedEntry && Array.isArray(cachedEntry.mf_baremleri) && cachedEntry.mf_baremleri.length > 0) {
+                parsedBarems = cachedEntry.mf_baremleri.map((raw: string) => {
+                    const p = raw.split('+');
+                    return {
+                        ana: parseInt(p[0]) || 0,
+                        mf: parseInt(p[1]) || 0
+                    };
+                }).filter((b: any) => b.ana > 0 && b.mf > 0);
+            }
+
             return {
                 barkod: id,
                 ad: val.ad || extra.v2 || 'Bilinmeyen Ürün',
@@ -579,8 +696,11 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                 qty: val.qty,
                 mf: val.mf || 0,
                 v95: val.v95 || extra.v95 || '',
-                mf_baremleri: val.mf_baremleri?.length ? val.mf_baremleri : (extra.mf_baremleri || []),
-                stock: typeof extra.v4 === 'number' ? extra.v4 : parseInt(extra.v4 || 0)
+                mf_baremleri: parsedBarems.length ? parsedBarems : (extra.mf_baremleri || []),
+                stock: stockVal,
+                v20: extra.v20 || 0,
+                groupTotalStock: extra.groupTotalStock ?? stockVal,
+                groupTotalSpeed: extra.groupTotalSpeed ?? ((extra.v20 || 0) * 30)
             };
         });
 
@@ -967,12 +1087,6 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                             Ürün{renderSortIcon('ad')}
                                         </th>
                                         <th
-                                            onClick={() => handleSort('barkod')}
-                                            className="px-2 md:px-4 py-2 md:py-3 text-left text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide cursor-pointer hover:text-teal-600 select-none"
-                                        >
-                                            Barkod{renderSortIcon('barkod')}
-                                        </th>
-                                        <th
                                             onClick={() => handleSort('qty')}
                                             className="px-2 md:px-4 py-2 md:py-3 text-center text-[9px] md:text-[11px] font-semibold text-stone-600 uppercase tracking-wide cursor-pointer hover:text-teal-600 select-none"
                                         >
@@ -996,6 +1110,17 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                         // GÜNCEL SORGU MF'LERİ: Her depo için en son sorgunun MF baremleri
                                         const queryBarems: { ana: number; mf: number }[] = [];
                                         const seenBarem = new Set<string>();
+                                        if (Array.isArray(item.mf_baremleri)) {
+                                            item.mf_baremleri.forEach(b => {
+                                                if (b && b.ana > 0 && b.mf > 0) {
+                                                    const key = `${b.ana}+${b.mf}`;
+                                                    if (!seenBarem.has(key)) {
+                                                        seenBarem.add(key);
+                                                        queryBarems.push({ ana: b.ana, mf: b.mf });
+                                                    }
+                                                }
+                                            });
+                                        }
                                         if (Array.isArray(localOrders)) {
                                             const warehouseLatestOrders: Record<string, any> = {};
                                             localOrders
@@ -1038,37 +1163,75 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                                     />
                                                 </td>
                                                 <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-semibold text-stone-900 select-none">
-                                                    <div className="flex items-center flex-wrap gap-2">
-                                                        <span
-                                                            onClick={() => onOpenProductAnalysis?.(item.barkod, item.ad)}
-                                                            className="cursor-pointer hover:text-teal-600 transition-colors"
-                                                        >{item.ad}</span>
-                                                        <span
-                                                            onClick={() => setExpandedBarkod(isExpanded ? null : item.barkod)}
-                                                            className="text-[10px] text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded font-normal shrink-0 cursor-pointer hover:bg-teal-100 transition-colors"
-                                                        >
-                                                            Geçmiş ({purchases.length} Alım · {queries.length} Sorgu)
-                                                        </span>
-                                                        {baremler.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-0.5">
-                                                                {baremler.map((b: any, bi: number) => (
-                                                                    <button
-                                                                        key={bi}
-                                                                        onClick={() => {
-                                                                            const updated = items.map(i => i.barkod === item.barkod ? { ...i, qty: b.ana, mf: b.mf } : i);
-                                                                            persistItems(updated);
-                                                                        }}
-                                                                        className="bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold font-mono text-[9px] px-1.5 py-0.5 rounded border border-teal-200 hover:border-teal-300 hover:scale-105 active:scale-95 transition-all shadow-sm"
-                                                                        title={`${b.ana} adet alıma ${b.mf} mf`}
-                                                                    >
-                                                                        {b.ana}+{b.mf}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        )}
+                                                    <div className="flex flex-col gap-1.5">
+                                                        <div className="flex items-center flex-wrap gap-2">
+                                                            <span
+                                                                onClick={() => onOpenProductAnalysis?.(item.barkod, item.ad)}
+                                                                className="cursor-pointer hover:text-teal-600 transition-colors"
+                                                            >{item.ad}</span>
+                                                            <button 
+                                                                onClick={async (e) => {
+                                                                    e.stopPropagation();
+                                                                    if (navigator.clipboard && window.isSecureContext) {
+                                                                        await navigator.clipboard.writeText(item.barkod);
+                                                                        setCopiedKey(item.barkod);
+                                                                        setTimeout(() => setCopiedKey(null), 1500);
+                                                                    }
+                                                                }}
+                                                                className="p-1 text-teal-600 hover:bg-teal-50 rounded transition-colors shrink-0"
+                                                                title={`Barkodu Kopyala: ${item.barkod}`}
+                                                            >
+                                                                {copiedKey === item.barkod ? (
+                                                                    <Check size={12} className="text-emerald-600" />
+                                                                ) : (
+                                                                    <Copy size={12} />
+                                                                )}
+                                                            </button>
+                                                            {baremler.length > 0 && (
+                                                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                                                    {baremler.map((b: any, bi: number) => {
+                                                                        const colorStyles = [
+                                                                            "bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200 hover:border-sky-300",
+                                                                            "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 hover:border-amber-300",
+                                                                            "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 hover:border-emerald-300",
+                                                                            "bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200 hover:border-purple-300",
+                                                                            "bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200 hover:border-rose-300",
+                                                                            "bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200 hover:border-teal-300"
+                                                                        ];
+                                                                        const colorClass = colorStyles[bi % colorStyles.length];
+                                                                        return (
+                                                                            <button
+                                                                                key={bi}
+                                                                                onClick={() => {
+                                                                                    const updated = items.map(i => i.barkod === item.barkod ? { ...i, qty: b.ana, mf: b.mf } : i);
+                                                                                    persistItems(updated);
+                                                                                }}
+                                                                                className={`font-bold font-mono text-[9px] px-1.5 py-0.5 rounded border hover:scale-105 active:scale-95 transition-all shadow-sm ${colorClass}`}
+                                                                                title={`${b.ana} adet alıma ${b.mf} mf`}
+                                                                            >
+                                                                                {b.ana}+{b.mf}
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center flex-wrap gap-2 text-[10px] font-normal text-stone-500">
+                                                            <span className="bg-stone-50 border border-stone-100 px-1.5 py-0.5 rounded">
+                                                                Hız: <strong className="text-stone-700 font-semibold">{((item.v20 || 0) * 30).toFixed(1)}/ay</strong>
+                                                            </span>
+                                                            <span className="bg-stone-50 border border-stone-100 px-1.5 py-0.5 rounded">
+                                                                G.Hız: <strong className="text-stone-700 font-semibold">{(item.groupTotalSpeed || 0).toFixed(1)}/ay</strong>
+                                                            </span>
+                                                            <span className="bg-stone-50 border border-stone-100 px-1.5 py-0.5 rounded">
+                                                                Stok: <strong className="text-stone-700 font-semibold">{item.stock || 0}</strong>
+                                                            </span>
+                                                            <span className="bg-stone-50 border border-stone-100 px-1.5 py-0.5 rounded">
+                                                                Grup Stok: <strong className="text-stone-700 font-semibold">{item.groupTotalStock || 0}</strong>
+                                                            </span>
+                                                        </div>
                                                     </div>
                                                 </td>
-                                                <td className="px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-mono text-stone-600">{item.barkod}</td>
                                                 <td className="px-2 md:px-4 py-2 md:py-3 text-center">
                                                     <input
                                                         type="number"
@@ -1104,7 +1267,7 @@ export default function SepetPage({ cart, syncStatus, persistItems, setActiveTab
                                             </tr>,
                                             isExpanded && (
                                                 <tr key={`${item.barkod}-expanded`} className="bg-stone-50/50 animate-fadeIn">
-                                                    <td colSpan={8} className="px-4 py-4 border-b border-stone-100">
+                                                    <td colSpan={5} className="px-4 py-4 border-b border-stone-100">
                                                         <div className="pl-8 pr-4 py-1 w-full">
                                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                                                 {/* Sol Kolon: Fatura Alımları */}
