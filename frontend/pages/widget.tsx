@@ -211,46 +211,19 @@ export default function WidgetPage() {
     setActiveIndex(-1);
   }, [searchResults]);
 
-  // 3. Control mouse-ignore based on coordinates
+  // 3. Control BrowserWindow height based on visibleHeight
   const isExpanded = !!(selectedProduct || showDropdown);
   const visibleHeight = selectedProduct ? 490 : (showDropdown ? 260 : 60);
 
   useEffect(() => {
     const bridge = getBridge();
     if (bridge) {
-      // Set initial mouseignore state
-      bridge.SetMouseIgnore(!isExpanded);
+      // Ensure the window is fully clickable (never ignored) since we resize it to exact content height
+      bridge.SetMouseIgnore(false);
+      // Resize Electron window bounds
+      bridge.ResizeWindow(visibleHeight);
     }
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const bridge = getBridge();
-      if (!bridge) return;
-
-      // If the mouse is within the visible height of the widget (top portion)
-      if (e.clientY <= visibleHeight) {
-        bridge.SetMouseIgnore(false);
-      } else {
-        // If the mouse is below the visible height (transparent empty area) and not expanded
-        if (!isExpanded) {
-          bridge.SetMouseIgnore(true);
-        }
-      }
-    };
-
-    const handleMouseLeave = () => {
-      const bridge = getBridge();
-      if (bridge && !isExpanded) {
-        bridge.SetMouseIgnore(true);
-      }
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseleave', handleMouseLeave);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseleave', handleMouseLeave);
-    };
-  }, [visibleHeight, isExpanded]);
+  }, [visibleHeight]);
 
   // 4. Selection
   const handleSelectProduct = (prod: any) => {

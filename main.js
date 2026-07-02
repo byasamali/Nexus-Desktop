@@ -131,7 +131,7 @@ function createWidgetWindow() {
     frame: false,
     transparent: true,
     alwaysOnTop: true,
-    resizable: false,
+    resizable: true,
     show: true,
     skipTaskbar: true,
     hasShadow: false,
@@ -159,20 +159,26 @@ function createWidgetWindow() {
   });
 }
 
-// widget:resize is now a no-op — window size is fixed at 480px.
-// The React component controls visible height via CSS. We use setIgnoreMouseEvents
-// to make the transparent / invisible parts of the window click-through.
+// widget:resize sets the BrowserWindow size dynamically matching visible content
 ipcMain.handle('widget:resize', async (event, height) => {
-  // no-op kept for API compatibility
+  if (widgetWindow) {
+    try {
+      widgetWindow.setSize(480, height);
+    } catch (err) {
+      console.error('[Main Process] widget:resize failed:', err);
+    }
+  }
 });
 
 ipcMain.handle('widget:set-mouse', async (event, ignore) => {
   if (widgetWindow) {
-    if (ignore) {
-      widgetWindow.setIgnoreMouseEvents(true, { forward: true });
-    } else {
-      widgetWindow.setIgnoreMouseEvents(false);
-    }
+    try {
+      if (ignore) {
+        widgetWindow.setIgnoreMouseEvents(true, { forward: true });
+      } else {
+        widgetWindow.setIgnoreMouseEvents(false);
+      }
+    } catch (err) {}
   }
 });
 
