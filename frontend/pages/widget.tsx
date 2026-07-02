@@ -371,26 +371,51 @@ export default function WidgetPage() {
     </span>
   );
 
+  // Custom JS-based dragging for the widget to work reliably on first click/drag (even when unfocused)
+  const handleDragMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only left click
+
+    const target = e.target as HTMLElement;
+    if (target.closest('input') || target.closest('button') || target.closest('select')) {
+      return;
+    }
+
+    e.preventDefault();
+    let startX = e.screenX;
+    let startY = e.screenY;
+    let isDragging = true;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDragging) return;
+      const dx = moveEvent.screenX - startX;
+      const dy = moveEvent.screenY - startY;
+      startX = moveEvent.screenX;
+      startY = moveEvent.screenY;
+
+      const bridge = getBridge();
+      if (bridge?.DragWindow) {
+        bridge.DragWindow(dx, dy);
+      }
+    };
+
+    const handleMouseUp = () => {
+      isDragging = false;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
   return (
     <div
       className="w-full select-none font-sans p-1.5 flex flex-col bg-transparent overflow-hidden"
       style={{ height: `${visibleHeight}px`, transition: 'height 0.2s cubic-bezier(0.16, 1, 0.3, 1)' }}
-      onMouseEnter={() => {
-        // Make clickable when hovering over widget
-        const bridge = getBridge();
-        if (bridge) bridge.SetMouseIgnore(false);
-      }}
-      onMouseLeave={() => {
-        // When mouse leaves, restore click-through for non-expanded state
-        if (!isExpanded) {
-          const bridge = getBridge();
-          if (bridge) bridge.SetMouseIgnore(true);
-        }
-      }}
     >
       {/* Search Bar Row */}
       <div
-        style={{ WebkitAppRegion: 'drag' } as any}
+        onMouseDown={handleDragMouseDown}
         className="flex items-center gap-1.5 h-12 bg-gradient-to-r from-teal-650 via-teal-600 to-cyan-700 border border-teal-400/40 shadow-[0_4px_25px_rgba(20,184,166,0.35)] rounded-xl px-3 w-full shrink-0 relative z-50 cursor-move"
       >
         <div className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center text-white/50">

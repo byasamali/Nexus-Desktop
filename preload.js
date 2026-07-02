@@ -43,7 +43,8 @@ window.__widgetBridge = {
   ResizeWindow: (height) => ipcRenderer.invoke('widget:resize', height),
   SetMouseIgnore: (ignore) => ipcRenderer.invoke('widget:set-mouse', ignore),
   HideWindow: () => ipcRenderer.invoke('widget:hide'),
-  OpenDevTools: () => ipcRenderer.invoke('widget:dev-tools')
+  OpenDevTools: () => ipcRenderer.invoke('widget:dev-tools'),
+  DragWindow: (dx, dy) => ipcRenderer.send('widget:drag', { dx, dy })
 };
 
 window.runtime = {

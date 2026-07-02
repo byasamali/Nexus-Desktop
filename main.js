@@ -220,6 +220,15 @@ ipcMain.on('widget:query-finished', (event, data) => {
   }
 });
 
+ipcMain.on('widget:drag', (event, { dx, dy }) => {
+  if (widgetWindow) {
+    try {
+      const [x, y] = widgetWindow.getPosition();
+      widgetWindow.setPosition(x + dx, y + dy);
+    } catch (err) {}
+  }
+});
+
 // IPC Handlers matching Go App bindings
 ipcMain.handle('wails:LoadSettings', async () => {
   try {
